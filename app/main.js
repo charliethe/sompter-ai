@@ -932,9 +932,10 @@ function notesReadLatest() {
       } catch {}
       fs.unlink(tmpFile, () => {});
       const lines = body.split('\n');
+      // Filter out assistant lines, keep user-written lines (last 3)
       const userMessages = lines
-        .filter(l => l.match(/^You:/))
-        .slice(-5);
+        .filter(l => l.trim() && !l.match(/^🤖\s*Sompter:/) && !l.match(/^Sompter Chat/))
+        .slice(-3);
       resolve(userMessages);
     });
   });
@@ -985,7 +986,7 @@ ipcMain.handle('startWatchMode', async () => {
         const r = await fetch(`${BACKEND}/api/watch/analyze-screen`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ screenshot_b64: b64, active_app: activeApp, notes_message: notesMsg, search_web: false }),
+          body: JSON.stringify({ screenshot_b64: b64, active_app: activeApp, notes_message: notesMsg, search_web: true }),
         });
         const data = await r.json();
         if (data.reply && mainWindow && !mainWindow.isDestroyed()) {

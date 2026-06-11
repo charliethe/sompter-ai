@@ -1098,15 +1098,22 @@ class WatchAnalyzeRequest(BaseModel):
 @app.post("/api/watch/analyze-screen")
 async def watch_analyze_screen(req: WatchAnalyzeRequest):
     try:
-        system_prompt = "You are a helpful Mac assistant watching the user's screen. Be concise and observational."
+        system_prompt = "You are a proactive Mac assistant watching the user's screen continuously. Be insightful and thorough."
         if req.active_app:
             system_prompt += f"\n\nActive application: {req.active_app}"
         if req.notes_message:
-            system_prompt += f"\n\nUser message: {req.notes_message}"
+            system_prompt += f"\n\nThe user wrote in their notes: {req.notes_message}. Address what they asked about."
+        if req.search_web:
+            system_prompt += " Use web search to fetch the latest news, sports scores, or relevant information."
         
-        prompt = "Describe what you see and give one actionable suggestion if relevant."
+        prompt = (
+            "Look at everything on screen — apps, tabs, code, news, scores, documents, etc. "
+            "Report on what's happening in detail. If you see sports scores, news headlines, "
+            "or market data, report the latest. If the user left a message in their notes, "
+            "answer it directly. Use web search for current information (scores, news, weather, stocks). "
+            "Be informative and proactive — the user wants to get smarter from this feed."
+        )
         b64 = req.screenshot_b64 if req.screenshot_b64 else None
-        # Try without screenshot first if it causes issues
         if b64:
             result = call_ai(b64, prompt, system_prompt, req.search_web)
         else:

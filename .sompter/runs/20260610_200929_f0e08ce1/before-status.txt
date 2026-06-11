@@ -1,0 +1,8 @@
+ M app/index.html
+ M app/main.js
+ M app/renderer.js
+ M app/style.css
+ M backend/server.py
+?? .sompter/runs/
+?? Sompter-v0.1.0-alpha-private.zip
+?? release/

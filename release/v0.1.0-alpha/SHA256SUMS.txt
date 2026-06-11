@@ -1,0 +1,2 @@
+b8cb9bad7ff0efa8e83f0eea8b279c8451eb4fef318b9b63421dc297c6a33ff0  Sompter AI-0.1.0-alpha-arm64.dmg
+47d8b40473d8b1f0ed4835da240fd5aadd27f623f12064a4f85cfcd3fd69d1ae  Sompter AI-0.1.0-alpha.dmg

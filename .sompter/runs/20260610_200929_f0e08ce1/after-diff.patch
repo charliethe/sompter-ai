@@ -1,0 +1,957 @@
+diff --git a/.sompter/opencode-prompt.txt b/.sompter/opencode-prompt.txt
+index c28843e..5a5ca4b 100644
+--- a/.sompter/opencode-prompt.txt
++++ b/.sompter/opencode-prompt.txt
+@@ -1,4 +1,15 @@
+-You are working inside this local project. The user wants: add a comment to the README saying hello world
+-Find the issue, explain it shortly, make safe code changes only, and run tests if available.
+-Do not delete files. Do not use sudo. Do not touch .env/auth/API keys.
+-If a risky command is needed, stop and explain.
+\ No newline at end of file
++You are fixing this local project: sompter-ai
++Path: /Users/charliekrason/Documents/desk/untitled folder/sompter-ai
++
++Visible screen problem:
++The screenshot depicts the Xcode IDE with a Smart Fix panel open, likely assisting with debugging an issue. The "Smart Fix" suggests a problem arose when interacting with a scroll field - specifically, it minimized the sampler window unexpectedly.  A task indicated is to target context (minimize Sampler) and then capture the error/problem on screen using Smart Fix via AI.
++
++User instruction:
++Look at the visible code on screen. Identify any bugs, suggest fixes, and provide improved code.
++
++Task:
++Find the likely source of the issue, make safe code changes only, and run safe checks if available.
++Do not delete files. Do not use sudo.
++Do not touch .env, auth.json, passwords, API keys, or secrets.
++Do not install packages unless clearly necessary; if needed, explain instead of running.
++After changes, summarize what changed and what to test.
+\ No newline at end of file
+diff --git a/app/index.html b/app/index.html
+index 5798134..7b612ef 100644
+--- a/app/index.html
++++ b/app/index.html
+@@ -473,7 +473,7 @@
+           <button id="project-delete-btn" class="small-btn" title="Delete selected profile">✕</button>
+         </div>
+         <div class="field-row">
+-          <input type="text" id="opencode-path" class="action-param" placeholder="/path/to/project" readonly />
++          <input type="text" id="opencode-path" class="action-param" placeholder="/path/to/project" />
+           <button id="project-choose-btn" class="small-btn">Choose</button>
+           <button id="project-save-btn" class="small-btn">Save As</button>
+         </div>
+@@ -552,6 +552,7 @@
+ 
+     <div id="chat-container">
+       <div id="chat-log"></div>
++      <button id="scroll-bottom-btn">↓ New responses</button>
+     </div>
+ 
+     <div id="input-area">
+@@ -621,7 +622,7 @@
+ 
+       $('#tab-quit-btn').addEventListener('click', (e) => {
+         e.stopPropagation();
+-        window.close();
++        window.electronAPI.quitApp();
+       });
+     }
+ 
+@@ -742,6 +743,7 @@
+     // ---- Existing app code ----
+ 
+     const chatLog = $('#chat-log');
++    const chatContainer = $('#chat-container');
+     const chatInput = $('#chat-input');
+     const sendBtn = $('#send-btn');
+     const statusDot = $('#status-dot');
+@@ -822,36 +824,149 @@
+       planSummary.textContent = 'Analyzing screen...';
+     }
+ 
+-    function addMessage(role, text) {
++    function escapeHtml(t) {
++      if (!t) return '';
++      return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
++    }
++
++    function renderMarkdown(text) {
++      if (!text) return '';
++      let html = text
++        .replace(/&/g, '&amp;')
++        .replace(/</g, '&lt;')
++        .replace(/>/g, '&gt;');
++
++      // Code blocks (protect from further processing)
++      html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, _lang, code) => {
++        return '<pre><code>' + code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></pre>';
++      });
++
++      // Inline code
++      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
++
++      // Links
++      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
++
++      // Bold & italic
++      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
++      html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
++
++      // Blockquotes
++      html = html.replace(/^&gt;\s?(.*)$/gm, '<blockquote>$1</blockquote>');
++
++      // List items
++      let inList = false;
++      const lines = html.split('\n');
++      const out = [];
++      for (let i = 0; i < lines.length; i++) {
++        const l = lines[i];
++        if (/^<li>/.test(l)) {
++          if (!inList) { out.push('<ul>'); inList = true; }
++          out.push(l);
++        } else {
++          if (inList) { out.push('</ul>'); inList = false; }
++          out.push(l);
++        }
++      }
++      if (inList) out.push('</ul>');
++      html = out.join('\n');
++
++      // Paragraphs
++      const paras = html.split(/\n\n+/);
++      html = paras.map(p => {
++        p = p.trim();
++        if (!p) return '';
++        if (/^<(pre|ul|ol|blockquote|li|h[1-6])/.test(p)) return p;
++        return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
++      }).join('\n');
++
++      return html;
++    }
++
++    function scrollToBottom() {
++      chatContainer.scrollTop = chatContainer.scrollHeight;
++      scrollBtn.classList.remove('visible');
++    }
++
++    function showSkeleton() {
++      const el = document.createElement('div');
++      el.className = 'skeleton-message';
++      el.id = 'skeleton-loader';
++      el.innerHTML = '<div class="skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>';
++      chatLog.appendChild(el);
++      scrollToBottom();
++      return el;
++    }
++
++    function removeSkeleton() {
++      const el = document.getElementById('skeleton-loader');
++      if (el) el.remove();
++    }
++
++    function addMessage(role, text, isStreaming) {
+       const el = document.createElement('div');
+       el.className = `message ${role}`;
+-      el.textContent = text;
++      const ts = new Date();
++      const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
++      const icon = role === 'user' ? '👤' : '🤖';
++      const label = role === 'user' ? 'You' : 'Sompter';
++
++      const contentHtml = role === 'assistant' ? renderMarkdown(text) : escapeHtml(text);
++      el.innerHTML = `
++        <div class="msg-header">
++          <span class="msg-icon">${icon}</span>
++          <span class="msg-label">${label}</span>
++          <span class="msg-time">${timeStr}</span>
++        </div>
++        <div class="msg-content${isStreaming ? ' streaming' : ''}">${contentHtml}</div>
++        <button class="msg-copy" title="Copy message">📋</button>
++      `;
++
++      el.querySelector('.msg-copy').addEventListener('click', function () {
++        navigator.clipboard.writeText(text).catch(() => {});
++        this.textContent = '✓';
++        this.classList.add('copied');
++        setTimeout(() => { this.textContent = '📋'; this.classList.remove('copied'); }, 1500);
++      });
++
+       chatLog.appendChild(el);
+-      chatLog.scrollTop = chatLog.scrollHeight;
++      scrollToBottom();
++      return el;
++    }
++
++    let autoCollapseTimer = null;
++
++    function cancelAutoCollapse() {
++      if (autoCollapseTimer) {
++        clearTimeout(autoCollapseTimer);
++        autoCollapseTimer = null;
++      }
+     }
+ 
+     function autoCollapse() {
+-      setTimeout(async () => {
++      cancelAutoCollapse();
++      autoCollapseTimer = setTimeout(async () => {
++        autoCollapseTimer = null;
+         const st = readState();
+         st.collapsed = true;
+         writeState(st);
+         await window.electronAPI.collapseWindow(st.y);
+-      }, 500);
++      }, 15000);
+     }
+ 
++    document.addEventListener('pointerdown', cancelAutoCollapse);
++    document.addEventListener('wheel', cancelAutoCollapse, { passive: true });
++
+     async function startControl() {
+       setMode('screen');
+       addMessage('user', 'Control Mac');
+       controlPanel.classList.remove('hidden');
+ 
+-      const loading = document.createElement('div');
+-      loading.className = 'message assistant loading';
+-      loading.textContent = 'Analyzing screen for action plan...';
+-      chatLog.appendChild(loading);
++      const loadingEl = showSkeleton();
+ 
+       try {
+         const plan = await window.electronAPI.controlPlan();
+-        loading.remove();
++        removeSkeleton();
+ 
+         if (plan.success) {
+           const msg = `Summary: ${plan.summary}\nSuggested: ${plan.recommended_action.reason}`;
+@@ -864,7 +979,7 @@
+ 
+         displayPlan(plan);
+       } catch (err) {
+-        loading.remove();
++        if (loadingEl) loadingEl.remove();
+         addMessage('assistant', `Error: ${err.message}`);
+         setMode('ask');
+         addHistoryEntry('control', 'Control Mac', err.message, 'failed');
+@@ -1379,6 +1494,10 @@
+       gearPopup.classList.add('hidden');
+     }
+ 
++    $('#smartfix-btn').addEventListener('click', async () => {
++      await smartFix();
++    });
++
+     $('#gear-prompts').addEventListener('click', () => {
+       hideAllPanels();
+       hideAllPanelsExcept('prompts-panel');
+@@ -1704,14 +1823,18 @@
+       validateProjectPath();
+     }
+ 
+-    function validateProjectPath() {
+-      const path = $('#opencode-path').value;
++    async function validateProjectPath() {
++      const path = $('#opencode-path').value.trim();
+       const warn = $('#project-path-warn');
+-      if (path) {
+-        const exists = window.electronAPI ? true : false;
+-        warn.classList.toggle('hidden', true);
+-      } else {
++      if (!path) {
++        warn.classList.add('hidden');
++        return;
++      }
++      const result = await window.electronAPI.checkPathExists(path);
++      if (result.exists && result.isDirectory) {
+         warn.classList.add('hidden');
++      } else {
++        warn.classList.remove('hidden');
+       }
+     }
+ 
+@@ -1842,6 +1965,8 @@
+       renderProjectSelect();
+     });
+ 
++    $('#opencode-path').addEventListener('input', validateProjectPath);
++
+     // ---- Init profiles on load ----
+     initProjectProfile();
+ 
+@@ -1851,27 +1976,100 @@
+       }
+     });
+ 
++    // Scroll-to-bottom button
++    const scrollBtn = $('#scroll-bottom-btn');
++
++    chatContainer.addEventListener('scroll', () => {
++      const threshold = 60;
++      const dist = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight;
++      scrollBtn.classList.toggle('visible', dist > threshold);
++      if (dist > threshold) {
++        cancelAutoCollapse();
++      }
++    });
++
++    scrollBtn.addEventListener('click', scrollToBottom);
++
++    // Keyboard shortcuts
++    document.addEventListener('keydown', (e) => {
++      if (e.key === 'Escape') {
++        const panelIds = ['prompts-panel', 'history-panel', 'setup-panel', 'models-panel', 'diagnostics-panel', 'services-panel', 'onboarding-panel', 'about-panel', 'gear-popup', 'prompts-editor'];
++        let anyOpen = false;
++        panelIds.forEach(id => {
++          const el = document.getElementById(id);
++          if (el && !el.classList.contains('hidden')) {
++            anyOpen = true;
++            if (id === 'gear-popup') gearOpen = false;
++            el.classList.add('hidden');
++          }
++        });
++        if (anyOpen) {
++          promptsPanelVisible = false; editorVisible = false; historyVisible = false;
++          setupVisible = false; modelsVisible = false; diagnosticsVisible = false;
++          servicesVisible = false; onboardingVisible = false; aboutVisible = false;
++        }
++      }
++    });
++
++    let streamingMsgEl = null;
++    let streamingFullText = '';
++    let streamingPrompt = '';
++    let isStreaming = false;
++    let streamStarted = false;
++
++    window.electronAPI.onChatChunk((data) => {
++      if (data.chunk && streamingMsgEl) {
++        if (!streamStarted) {
++          streamStarted = true;
++          removeSkeleton();
++        }
++        streamingFullText += data.chunk;
++        const contentEl = streamingMsgEl.querySelector('.msg-content');
++        if (contentEl) {
++          contentEl.innerHTML = renderMarkdown(streamingFullText);
++          scrollToBottom();
++        }
++      }
++      if (data.done) {
++        if (streamingMsgEl) {
++          streamingMsgEl.querySelector('.msg-content').classList.remove('streaming');
++        }
++        const hasError = streamingFullText && (
++          streamingFullText.includes('Error:') || streamingFullText.includes('AI error')
++        );
++        addHistoryEntry('chat', streamingPrompt, streamingFullText, hasError ? 'failed' : 'success');
++        streamingMsgEl = null;
++        streamingFullText = '';
++        streamingPrompt = '';
++        isStreaming = false;
++        streamStarted = false;
++        removeSkeleton();
++        if (!hasError) autoCollapse();
++      }
++    });
++
+     async function ask(prompt) {
+       if (!prompt.trim()) return;
+       addMessage('user', prompt);
+       chatInput.value = '';
+ 
+-      const loading = document.createElement('div');
+-      loading.className = 'message assistant loading';
+-      loading.textContent = 'Thinking...';
+-      chatLog.appendChild(loading);
++      streamingPrompt = prompt;
++      streamingFullText = '';
++      isStreaming = true;
++      streamingMsgEl = addMessage('assistant', '', true);
++      showSkeleton();
+ 
+       try {
+-        const result = await window.electronAPI.ask(prompt);
+-        loading.remove();
+-        const msg = result.message || result.answer || result;
+-        addMessage('assistant', typeof msg === 'string' ? msg : JSON.stringify(msg));
+-        addHistoryEntry('chat', prompt, msg, 'success');
+-        autoCollapse();
++        window.electronAPI.startAskStream(prompt);
+       } catch (err) {
+-        loading.remove();
+-        addMessage('assistant', `Error: ${err.message}`);
++        isStreaming = false;
++        removeSkeleton();
++        if (streamingMsgEl) {
++          streamingMsgEl.querySelector('.msg-content').classList.remove('streaming');
++          streamingMsgEl.querySelector('.msg-content').innerHTML = renderMarkdown(`Error: ${err.message}`);
++        }
+         addHistoryEntry('chat', prompt, err.message, 'failed');
++        streamingMsgEl = null;
+       }
+     }
+ 
+@@ -2010,12 +2208,34 @@
+     });
+ 
+     $('#setup-open-folder-btn').addEventListener('click', async () => {
+-      const active = getActiveProfile();
+-      const path = active ? active.path : localStorage.getItem('sompter_opencode_path');
+-      if (path) {
+-        await window.electronAPI.openFolder(path);
+-      } else {
+-        showSetupResult(false, 'No project path set');
++      const result = await window.electronAPI.selectFolder();
++      if (result.success && result.path) {
++        $('#opencode-path').value = result.path;
++        localStorage.setItem('sompter_opencode_path', result.path);
++        currentProfileId = null;
++        renderProjectSelect();
++        const name = result.path.split('/').pop() || 'Project';
++        const profiles = loadProfiles();
++        const existing = profiles.find(p => p.path === result.path);
++        if (existing) {
++          currentProfileId = existing.id;
++          existing.lastUsed = new Date().toISOString();
++          saveProfiles(profiles);
++        } else {
++          const profile = {
++            id: 'proj_' + Date.now().toString(36),
++            name: name,
++            path: result.path,
++            isDefault: profiles.length === 0,
++            lastUsed: new Date().toISOString(),
++          };
++          profiles.push(profile);
++          saveProfiles(profiles);
++          currentProfileId = profile.id;
++        }
++        renderProjectSelect();
++        showSetupResult(true, 'Project set: ' + name);
++        await refreshSetupStatus();
+       }
+     });
+ 
+@@ -2250,14 +2470,7 @@
+       }
+     }
+ 
+-    $('#models-btn').addEventListener('click', () => {
+-      modelsVisible = !modelsVisible;
+-      modelsPanel.classList.toggle('hidden', !modelsVisible);
+-      if (modelsVisible) {
+-        modelsResult.classList.add('hidden');
+-        loadModelsSettings();
+-      }
+-    });
++    // Removed: #models-btn no longer exists (replaced by gear popup -> #gear-models)
+ 
+     $('#models-close-btn').addEventListener('click', () => {
+       modelsVisible = false;
+@@ -2332,14 +2545,7 @@
+       setTimeout(() => { servicesResult.classList.add('hidden'); }, 5000);
+     }
+ 
+-    $('#services-btn').addEventListener('click', () => {
+-      servicesVisible = !servicesVisible;
+-      servicesPanel.classList.toggle('hidden', !servicesVisible);
+-      if (servicesVisible) {
+-        servicesResult.classList.add('hidden');
+-        updateServiceStatus();
+-      }
+-    });
++    // Removed: #services-btn no longer exists (replaced by gear popup -> #gear-services)
+ 
+     $('#services-close-btn').addEventListener('click', () => {
+       servicesVisible = false;
+@@ -2565,6 +2771,14 @@
+           if (p) p.classList.add('hidden');
+         }
+       });
++      if (excludeId) {
++        const shown = document.querySelector('#' + excludeId);
++        if (shown && shown.classList.contains('hidden')) {
++          shown.classList.remove('hidden');
++          shown.classList.add('panel-slide');
++          setTimeout(() => shown.classList.remove('panel-slide'), 300);
++        }
++      }
+     }
+ 
+     // Navigation
+@@ -2694,14 +2908,6 @@
+       const input = $('#chat-input');
+       if (input) {
+         input.value = 'Explain what is on my screen';
+-        const modeRadio = document.querySelector('#preset-buttons input[name="mode"]:checked') ||
+-                         document.querySelector('input[name="mode"][value="screen"]');
+-        if (modeRadio) {
+-          // Find closest preset button with mode=screen and click
+-          const screenPreset = document.querySelector('#preset-buttons .preset-btn[data-mode="screen"]');
+-          if (screenPreset) screenPreset.click();
+-        }
+-        // Trigger ask
+         $('#send-btn')?.click();
+       }
+     });
+diff --git a/app/main.js b/app/main.js
+index db6635c..407bd18 100644
+--- a/app/main.js
++++ b/app/main.js
+@@ -439,6 +439,51 @@ ipcMain.handle('ask', async (_event, { prompt }) => {
+   }
+ });
+ 
++ipcMain.handle('startAskStream', async (_event, { prompt }) => {
++  try {
++    const base64 = await takeScreenshot();
++    const response = await fetch(`${BACKEND}/api/chat/stream`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ prompt, screenshot: base64 }),
++    });
++    const reader = response.body.getReader();
++    const decoder = new TextDecoder();
++    let buffer = '';
++
++    while (true) {
++      const { done, value } = await reader.read();
++      if (done) break;
++      buffer += decoder.decode(value, { stream: true });
++      const lines = buffer.split('\n');
++      buffer = lines.pop() || '';
++      for (const line of lines) {
++        if (line.startsWith('data: ')) {
++          try {
++            const data = JSON.parse(line.slice(6));
++            if (mainWindow && !mainWindow.isDestroyed()) {
++              mainWindow.webContents.send('chat-chunk', data);
++            }
++          } catch {}
++        }
++      }
++    }
++    // Process any remaining data
++    if (buffer.startsWith('data: ')) {
++      try {
++        const data = JSON.parse(buffer.slice(6));
++        if (mainWindow && !mainWindow.isDestroyed()) {
++          mainWindow.webContents.send('chat-chunk', data);
++        }
++      } catch {}
++    }
++  } catch (err) {
++    if (mainWindow && !mainWindow.isDestroyed()) {
++      mainWindow.webContents.send('chat-chunk', { chunk: `\n\nError: ${err.message}`, done: true });
++    }
++  }
++});
++
+ ipcMain.handle('controlPlan', async () => {
+   try {
+     const base64 = await takeScreenshot();
+@@ -592,6 +637,16 @@ ipcMain.handle('selectFolder', async () => {
+   return { success: true, path: result.filePaths[0] };
+ });
+ 
++ipcMain.handle('checkPathExists', async (_event, { path: checkPath }) => {
++  try {
++    const exists = fs.existsSync(checkPath);
++    const isDir = exists ? fs.statSync(checkPath).isDirectory() : false;
++    return { success: true, exists, isDirectory: isDir };
++  } catch (err) {
++    return { success: false, exists: false, isDirectory: false, error: err.message };
++  }
++});
++
+ ipcMain.handle('runsList', async (_event, { projectPath }) => {
+   try {
+     const r = await fetch(`${BACKEND}/api/runs/list?project_path=${encodeURIComponent(projectPath)}`);
+@@ -783,6 +838,10 @@ ipcMain.handle('appSafeMode', async () => {
+   return { success: true, safe_mode: process.argv.includes('--safe-mode') || process.env.SAFE_MODE === '1' };
+ });
+ 
++ipcMain.handle('quitApp', async () => {
++  app.quit();
++});
++
+ // ---- About / Version IPC ----
+ 
+ ipcMain.handle('getAboutInfo', async () => {
+diff --git a/app/renderer.js b/app/renderer.js
+index 1a7168c..e42180f 100644
+--- a/app/renderer.js
++++ b/app/renderer.js
+@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
+ 
+ contextBridge.exposeInMainWorld('electronAPI', {
+   ask: (prompt) => ipcRenderer.invoke('ask', { prompt }),
++  startAskStream: (prompt) => ipcRenderer.invoke('startAskStream', { prompt }),
++  onChatChunk: (callback) => {
++    ipcRenderer.on('chat-chunk', (_event, data) => callback(data));
++  },
+   controlPlan: () => ipcRenderer.invoke('controlPlan'),
+   runAction: (action, params) => ipcRenderer.invoke('runAction', { action, params }),
+   runBrowserAction: (action, params) => ipcRenderer.invoke('runBrowserAction', { action, params }),
+@@ -37,6 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
+ 
+   // Folder selection
+   selectFolder: () => ipcRenderer.invoke('selectFolder'),
++  checkPathExists: (p) => ipcRenderer.invoke('checkPathExists', { path: p }),
+ 
+   // Smart Fix
+   smartFix: (projectPath, projectName, userPrompt) => ipcRenderer.invoke('smartFix', { projectPath, projectName, userPrompt }),
+@@ -82,4 +87,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
+   onGlobalToggle: (callback) => {
+     ipcRenderer.on('global-toggle', () => callback());
+   },
++
++  quitApp: () => ipcRenderer.invoke('quitApp'),
+ });
+diff --git a/app/style.css b/app/style.css
+index e6e8256..296df8d 100644
+--- a/app/style.css
++++ b/app/style.css
+@@ -1967,3 +1967,303 @@ textarea.action-param {
+ 
+ #setup-reset-btn { border-color: #c0392b; color: #e74c3c; }
+ #setup-export-btn { border-color: #8b5cf6; color: #a78bfa; }
++
++/* ==== Markdown Chat Bubbles ==== */
++
++.message {
++  position: relative;
++}
++
++.msg-body {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++}
++
++.msg-header {
++  display: flex;
++  align-items: center;
++  gap: 4px;
++  margin-bottom: 2px;
++}
++
++.msg-icon {
++  width: 18px;
++  height: 18px;
++  border-radius: 50%;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  font-size: 9px;
++  flex-shrink: 0;
++}
++
++.message.user .msg-icon {
++  background: #6d28d9;
++  color: #fff;
++}
++
++.message.assistant .msg-icon {
++  background: #3d3d5c;
++  color: #a78bfa;
++}
++
++.msg-label {
++  font-size: 10px;
++  font-weight: 600;
++  color: #a0a0b0;
++}
++
++.msg-time {
++  font-size: 9px;
++  color: #555;
++  margin-left: auto;
++}
++
++.msg-copy {
++  position: absolute;
++  top: 4px;
++  right: 4px;
++  background: rgba(255,255,255,0.08);
++  border: none;
++  color: #666;
++  font-size: 10px;
++  padding: 2px 6px;
++  border-radius: 4px;
++  cursor: pointer;
++  opacity: 0;
++  transition: opacity 0.15s, background 0.15s;
++  line-height: 1;
++}
++
++.message:hover .msg-copy {
++  opacity: 1;
++}
++
++.msg-copy:hover {
++  background: rgba(255,255,255,0.18);
++  color: #ccc;
++}
++
++.msg-copy.copied {
++  background: #166534;
++  color: #86efac;
++  opacity: 1;
++}
++
++/* Markdown content */
++.msg-content {
++  font-size: 13px;
++  line-height: 1.5;
++}
++
++.msg-content p {
++  margin: 4px 0;
++}
++.msg-content p:first-child { margin-top: 0; }
++.msg-content p:last-child { margin-bottom: 0; }
++
++.msg-content code {
++  background: #1a1a2e;
++  padding: 1px 5px;
++  border-radius: 3px;
++  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
++  font-size: 12px;
++  color: #c4b5fd;
++}
++
++.msg-content pre {
++  background: #1a1a2e;
++  border: 1px solid #3d3d5c;
++  border-radius: 6px;
++  padding: 10px;
++  overflow-x: auto;
++  margin: 8px 0;
++}
++
++.msg-content pre code {
++  background: none;
++  padding: 0;
++  border-radius: 0;
++  font-size: 11px;
++  line-height: 1.5;
++  color: #c0c0d0;
++  white-space: pre;
++}
++
++.msg-content ul, .msg-content ol {
++  margin: 4px 0;
++  padding-left: 20px;
++}
++
++.msg-content li {
++  margin: 2px 0;
++}
++
++.msg-content a {
++  color: #a78bfa;
++  text-decoration: underline;
++}
++.msg-content a:hover { color: #c4b5fd; }
++
++.msg-content blockquote {
++  border-left: 3px solid #7c3aed;
++  padding: 4px 10px;
++  margin: 6px 0;
++  color: #a0a0b0;
++  font-style: italic;
++  background: #1a1a2e;
++  border-radius: 0 4px 4px 0;
++}
++
++.msg-content strong { font-weight: 700; color: #e8e0ff; }
++.msg-content em { font-style: italic; color: #c4b5fd; }
++
++/* Streaming cursor */
++.msg-content.streaming::after {
++  content: '▊';
++  animation: blink 0.8s step-end infinite;
++  color: #a78bfa;
++  margin-left: 2px;
++}
++
++@keyframes blink {
++  50% { opacity: 0; }
++}
++
++/* Skeleton loading */
++.skeleton-message {
++  display: flex;
++  gap: 10px;
++  padding: 12px;
++  align-items: flex-start;
++}
++
++.skeleton-avatar {
++  width: 26px;
++  height: 26px;
++  border-radius: 50%;
++  background: #3d3d5c;
++  flex-shrink: 0;
++  animation: skeleton-pulse 1.5s ease-in-out infinite;
++}
++
++.skeleton-lines {
++  flex: 1;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  padding-top: 4px;
++}
++
++.skeleton-line {
++  height: 10px;
++  background: #3d3d5c;
++  border-radius: 4px;
++  animation: skeleton-pulse 1.5s ease-in-out infinite;
++}
++
++.skeleton-line:nth-child(2) { width: 85%; }
++.skeleton-line:nth-child(3) { width: 55%; }
++
++@keyframes skeleton-pulse {
++  0%, 100% { opacity: 0.3; }
++  50% { opacity: 0.6; }
++}
++
++/* Auto-scroll button */
++#scroll-bottom-btn {
++  display: none;
++  position: sticky;
++  bottom: 0;
++  width: 100%;
++  background: linear-gradient(135deg, #2d2d4a, #3d3d5c);
++  border: 1px solid #4a4a6a;
++  color: #a78bfa;
++  padding: 5px;
++  font-size: 10px;
++  font-weight: 600;
++  text-align: center;
++  cursor: pointer;
++  border-radius: 0 0 8px 8px;
++  transition: all 0.15s;
++  letter-spacing: 0.3px;
++}
++#scroll-bottom-btn:hover {
++  background: linear-gradient(135deg, #3d3d5c, #4a4a6a);
++  color: #c4b5fd;
++}
++#scroll-bottom-btn.visible {
++  display: block;
++}
++
++/* Panel slide-in animation */
++.panel-slide {
++  animation: panelSlideIn 0.2s ease-out;
++}
++
++@keyframes panelSlideIn {
++  from { opacity: 0; transform: translateY(-6px); }
++  to { opacity: 1; transform: translateY(0); }
++}
++
++/* Gradient accent on title */
++#title {
++  background: linear-gradient(135deg, #c4b5fd, #7c3aed);
++  -webkit-background-clip: text;
++  -webkit-text-fill-color: transparent;
++  background-clip: text;
++  font-weight: 800;
++  letter-spacing: 0.5px;
++}
++
++header::after {
++  content: '';
++  display: block;
++  height: 2px;
++  margin-top: 4px;
++  background: linear-gradient(90deg, transparent, #7c3aed, #a78bfa, transparent);
++  border-radius: 1px;
++}
++
++/* Gradient send button */
++#send-btn {
++  background: linear-gradient(135deg, #7c3aed, #9a5cff);
++  border: none;
++  transition: all 0.15s;
++}
++#send-btn:hover {
++  background: linear-gradient(135deg, #6d28d9, #7c3aed);
++  box-shadow: 0 0 12px rgba(124,58,237,0.4);
++}
++
++/* Status bar polish */
++#status-text {
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.3px;
++}
++
++/* Footer mode polish */
++.footer-mode {
++  color: #a78bfa;
++  font-weight: 700;
++  font-size: 10px;
++  text-transform: uppercase;
++  letter-spacing: 0.5px;
++}
++
++.footer-provider {
++  color: #7c3aed;
++  font-weight: 600;
++  font-size: 10px;
++}
++
++/* Smart Fix button polish */
++#preset-actions .preset-action-btn:first-child {
++  background: linear-gradient(135deg, #7c3aed, #6d28d9);
++  box-shadow: 0 0 8px rgba(124,58,237,0.3);
++}
++#preset-actions .preset-action-btn:first-child:hover {
++  box-shadow: 0 0 16px rgba(124,58,237,0.5);
++}
+diff --git a/backend/server.py b/backend/server.py
+index b60b66e..307be20 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -12,8 +12,11 @@ import uuid
+ import datetime
+ import requests
+ import pyautogui
++pyautogui.FAILSAFE = False  # Safe: all actions require user confirmation
++import asyncio
+ from fastapi import FastAPI, HTTPException
+ from fastapi.middleware.cors import CORSMiddleware
++from starlette.responses import StreamingResponse
+ from pydantic import BaseModel
+ from dotenv import load_dotenv
+ 
+@@ -400,6 +403,24 @@ async def chat(req: ChatRequest):
+         return {"message": f"AI error: {str(e)}"}
+ 
+ 
++@app.post("/api/chat/stream")
++async def chat_stream(req: ChatRequest):
++    async def generate():
++        try:
++            loop = asyncio.get_event_loop()
++            result = await loop.run_in_executor(None, call_ai, req.screenshot, req.prompt, None, req.search_web)
++            words = result.split(" ")
++            for i, word in enumerate(words):
++                chunk = word + (" " if i < len(words) - 1 else "")
++                yield f"data: {json.dumps({'chunk': chunk, 'done': False})}\n\n"
++                await asyncio.sleep(0.015)
++            yield f"data: {json.dumps({'chunk': '', 'done': True})}\n\n"
++        except Exception as e:
++            yield f"data: {json.dumps({'chunk': f'Error: {str(e)}', 'done': True})}\n\n"
++
++    return StreamingResponse(generate(), media_type="text/event-stream")
++
++
+ @app.post("/api/control/plan")
+ async def control_plan(req: PlanRequest):
+     try:

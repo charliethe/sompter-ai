@@ -1,0 +1,1 @@
+OpenCode session not active. I saved the prompt here: .sompter/opencode-prompt.txt. Open OpenCode in this project and paste/run that prompt manually.

@@ -1,0 +1,8 @@
+You are working inside this local project. The user wants: Fix the issue visible on my screen and any code problems in this project.
+Find the issue, explain it shortly, make safe code changes only, and run tests if available.
+Do not delete files. Do not use sudo. Do not touch .env/auth/API keys.
+If a risky command is needed, stop and explain.
+
+Screenshot context: Here's a description of the screenshot:
+
+The image shows a desktop environment with multiple windows open, indicating someone is likely working on several tasks simultaneously. A weather widget displays Charleston, SC, with a temperature of 80°F and a mostly sunny forecast. The main focus appears to be "Sompter AI" software, which has various options related to screen recording and project settings visible on the right-hand side of the screen.

@@ -1,0 +1,15 @@
+You are fixing this local project: sompter-ai
+Path: /Users/charliekrason/Documents/desk/untitled folder/sompter-ai
+
+Visible screen problem:
+The screenshot depicts the Xcode IDE with a Smart Fix panel open, likely assisting with debugging an issue. The "Smart Fix" suggests a problem arose when interacting with a scroll field - specifically, it minimized the sampler window unexpectedly.  A task indicated is to target context (minimize Sampler) and then capture the error/problem on screen using Smart Fix via AI.
+
+User instruction:
+Look at the visible code on screen. Identify any bugs, suggest fixes, and provide improved code.
+
+Task:
+Find the likely source of the issue, make safe code changes only, and run safe checks if available.
+Do not delete files. Do not use sudo.
+Do not touch .env, auth.json, passwords, API keys, or secrets.
+Do not install packages unless clearly necessary; if needed, explain instead of running.
+After changes, summarize what changed and what to test.
