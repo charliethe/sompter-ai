@@ -292,6 +292,11 @@
             <span class="watch-label">Last seen:</span>
             <span class="watch-value" id="watch-daemon-last-obs">—</span>
           </div>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <button id="daemon-start-btn" class="small-btn" style="flex:1">Start</button>
+            <button id="daemon-stop-btn" class="small-btn" style="flex:1">Stop</button>
+            <button id="daemon-restart-btn" class="small-btn" style="flex:1">Restart</button>
+          </div>
         </div>
         <div id="watch-info">
           <div class="watch-section-title">Last Cycle</div>
@@ -2820,6 +2825,26 @@
         console.error('Failed to poll daemon status:', e);
       }
     }
+
+    // Daemon control buttons
+    $('#daemon-start-btn').addEventListener('click', async () => {
+      $('#daemon-start-btn').textContent = '...';
+      await window.electronAPI.startDaemon();
+      setTimeout(pollDaemonStatus, 2000);
+      $('#daemon-start-btn').textContent = 'Start';
+    });
+    $('#daemon-stop-btn').addEventListener('click', async () => {
+      $('#daemon-stop-btn').textContent = '...';
+      await window.electronAPI.stopDaemon();
+      setTimeout(pollDaemonStatus, 2000);
+      $('#daemon-stop-btn').textContent = 'Stop';
+    });
+    $('#daemon-restart-btn').addEventListener('click', async () => {
+      $('#daemon-restart-btn').textContent = '...';
+      await window.electronAPI.restartDaemon();
+      setTimeout(pollDaemonStatus, 3000);
+      $('#daemon-restart-btn').textContent = 'Restart';
+    });
 
     // ---- About Panel ----
 

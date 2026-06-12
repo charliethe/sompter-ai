@@ -251,6 +251,11 @@ def call_ollama(prompt: str, screenshot_b64: str | None, search_web: bool, syste
     if search_web:
         search_results = web_search(prompt)
 
+    # Safe context for gemma3 (8GB model on limited GPU — full context OOMs)
+    options = {}
+    if "gemma3" in ollama_model:
+        options["num_ctx"] = 512
+
     messages = [{"role": "system", "content": system}]
     user_content = prompt
     if search_results:
@@ -265,7 +270,7 @@ def call_ollama(prompt: str, screenshot_b64: str | None, search_web: bool, syste
 
     resp = requests.post(
         "http://localhost:11434/api/chat",
-        json={"model": ollama_model, "messages": messages, "stream": False},
+        json={"model": ollama_model, "messages": messages, "stream": False, "options": options},
         timeout=120,
     )
     resp.raise_for_status()
@@ -509,7 +514,22 @@ async def health():
         "openai_model": settings.get("openai_model", openai_model),
         "gemini_available": bool(gemini_api_key),
         "openai_available": bool(openai_api_key),
+        "daemon": _read_daemon_status(),
     }
+
+
+def _read_daemon_status() -> dict:
+    path = os.path.join(SOMPTER_DIR, "daemon-status.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+            return {
+                "running": data.get("status", "") in ("running", "running, no changes"),
+                "pid": data.get("pid", 0),
+                "cycle": data.get("cycle", 0),
+            }
+    except Exception:
+        return {"running": False, "pid": 0, "cycle": 0}
 
 
 def get_git_commit():

@@ -1033,6 +1033,38 @@ ipcMain.handle('getDaemonStatus', async () => {
   }
 });
 
+const DAEMON_SCRIPT = path.join(__dirname, '..', 'scripts', 'manage-daemon.sh');
+
+ipcMain.handle('startDaemon', async () => {
+  try {
+    const { execSync } = require('child_process');
+    execSync(`bash "${DAEMON_SCRIPT}" start`, { timeout: 10000 });
+    return { success: true };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+});
+
+ipcMain.handle('stopDaemon', async () => {
+  try {
+    const { execSync } = require('child_process');
+    execSync(`bash "${DAEMON_SCRIPT}" stop`, { timeout: 10000 });
+    return { success: true };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+});
+
+ipcMain.handle('restartDaemon', async () => {
+  try {
+    const { execSync } = require('child_process');
+    execSync(`bash "${DAEMON_SCRIPT}" restart`, { timeout: 15000 });
+    return { success: true };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+});
+
 ipcMain.handle('notesSend', async (_event, text) => {
   try {
     await notesAppend(text);

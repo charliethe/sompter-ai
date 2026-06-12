@@ -26,7 +26,8 @@
     "summary:run": ".venv/bin/python3 scripts/daily-summary.py",
     "summary:install": "bash scripts/manage-daemon.sh install-summary",
     "summary:test": ".venv/bin/python3 scripts/daily-summary.py 2>&1 | tail -20",
-    "memory:recent": "sqlite3 .sompter/memory.db \"SELECT timestamp, active_app, notes_message FROM observations ORDER BY id DESC LIMIT 5;\""
+    "memory:recent": "sqlite3 .sompter/memory.db \"SELECT timestamp, active_app, notes_message FROM observations ORDER BY id DESC LIMIT 5;\"",
+    "status": ".venv/bin/python3 -c \"import urllib.request,json; d=json.loads(urllib.request.urlopen('http://localhost:8787/api/health',timeout=5).read()); print(f'Sompter AI Status\\n\\nBackend: OK | Model: {d[\\\"ollama_model\\\"]} | Ollama: {d[\\\"ollama\\\"]} | Daemon: {\\\"RUNNING\\\" if d.get(\\\"daemon\\\",{}).get(\\\"running\\\") else \\\"STOPPED\\\"} (PID {d.get(\\\"daemon\\\",{}).get(\\\"pid\\\",0)}) cycle {d.get(\\\"daemon\\\",{}).get(\\\"cycle\\\",0)}')\" 2>&1 || echo 'Backend: DOWN (npm run backend)'"
   },
   "keywords": [],
   "author": "",
