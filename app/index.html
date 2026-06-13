@@ -2988,7 +2988,10 @@
       const el = (id) => document.getElementById(id);
       el('watch-daemon-status').classList.remove('hidden');
       const statusText = el('watch-daemon-status-text');
-      if (status && status.status === 'running') {
+      if (status && status.stale && status.status !== 'stopped' && status.status !== 'stale') {
+        statusText.textContent = 'Stale (no heartbeat)';
+        statusText.style.color = '#f59e0b';
+      } else if (status && status.status === 'running') {
         statusText.textContent = 'Running';
         statusText.style.color = '#22c55e';
       } else if (status && status.status && status.status.includes('running')) {

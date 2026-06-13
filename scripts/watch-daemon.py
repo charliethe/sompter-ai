@@ -808,7 +808,142 @@ def get_graph_context(max_entities: int = 8) -> str:
     return " | ".join(parts) if parts else ""
 
 
-# ── Main loop ──────────────────────────────────────────────────────────
+def ai_enhance_entities():
+    """Batch-call the AI every ~20 observations to extract high-quality entities.
+    Uses the backend /api/chat to analyze recent observation text."""
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        rows = conn.execute(
+            """SELECT id, notes_message, ai_reply FROM observations
+               WHERE ai_reply != '' ORDER BY id DESC LIMIT 20"""
+        ).fetchall()
+        conn.close()
+        if len(rows) < 5:
+            return
+    except Exception:
+        return
+
+    obs_text = ""
+    for oid, msg, reply in rows:
+        obs_text += f"\nObs #{oid}: User: {msg[:200]} | AI: {reply[:300]}"
+
+    prompt = (
+        "Extract named entities from these AI chat observations. "
+        "For each entity, give: name, type (person/technology/project/organization/location/topic). "
+        "Also identify relationships between entities using '->' with a type. "
+        "Return in this exact format:\n"
+        "ENTITIES:\n- Person: Name\n- Technology: Name\n...\n"
+        "RELATIONSHIPS:\n- Name1 -> Name2 (works_with)\n...\n\n"
+        "Only include clear, specific entities. Skip generic words.\n"
+        f"Observations:\n{obs_text}"
+    )
+
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/api/chat",
+            json={"prompt": prompt, "screenshot": "", "search_web": False},
+            timeout=120,
+        )
+        result = resp.json().get("message", "")
+    except Exception as e:
+        log.warning(f"AI entity enhancement failed: {e}")
+        return
+
+    # Parse entities from response
+    current_type = None
+    ai_entities: list[tuple[str, str]] = []
+    ai_relationships: list[tuple[str, str, str]] = []
+    in_entities = False
+    in_relationships = False
+
+    for line in result.split("\n"):
+        line = line.strip()
+        if line.upper().startswith("ENTITIES"):
+            in_entities = True
+            in_relationships = False
+            continue
+        if line.upper().startswith("RELATIONSHIPS"):
+            in_entities = False
+            in_relationships = True
+            continue
+        if in_entities and line.startswith("-"):
+            # Parse "- Type: Name"
+            m = re.match(r'-\s*(person|technology|project|organization|location|topic|sports_team):\s*(.+)', line, re.I)
+            if m:
+                etype = m.group(1).lower()
+                ename = m.group(2).strip().rstrip('.')
+                if ename and len(ename) >= 3:
+                    ai_entities.append((ename, etype))
+            # Also try "- Name (type)" format
+            m = re.match(r'-\s*(.+?)\s*\((\w+)\)', line)
+            if m and not any(n == m.group(1).strip() for n, _ in ai_entities):
+                ai_entities.append((m.group(1).strip(), m.group(2).lower()))
+        if in_relationships and "->" in line:
+            parts = line.split("->")
+            if len(parts) == 2:
+                e1 = parts[0].strip().lstrip("- ")
+                rest = parts[1].strip()
+                m = re.match(r'(.+?)\s*\((.+?)\)', rest)
+                if m:
+                    e2 = m.group(1).strip()
+                    rel = m.group(2).strip()
+                    ai_relationships.append((e1, e2, rel))
+
+    if not ai_entities:
+        return
+
+    now = datetime.now().isoformat()
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        # Upsert AI-identified entities
+        for ename, etype in ai_entities:
+            row = conn.execute(
+                "SELECT id FROM entities WHERE name = ?", (ename,)
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """UPDATE entities SET mentions = mentions + 5, type = ?,
+                       last_seen = ?, context = 'ai-enhanced'
+                       WHERE id = ?""",
+                    (etype, now, row[0]),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO entities (name, type, mentions, first_seen, last_seen, context)
+                       VALUES (?, ?, 5, ?, ?, 'ai-enhanced')""",
+                    (ename, etype, now, now),
+                )
+        # Upsert AI-identified relationships
+        for e1_name, e2_name, rel_type in ai_relationships:
+            r1 = conn.execute("SELECT id FROM entities WHERE name = ?", (e1_name,)).fetchone()
+            r2 = conn.execute("SELECT id FROM entities WHERE name = ?", (e2_name,)).fetchone()
+            if r1 and r2:
+                e1_id, e2_id = r1[0], r2[0]
+                existing = conn.execute(
+                    """SELECT id, strength FROM relationships
+                       WHERE (entity1_id = ? AND entity2_id = ?)
+                          OR (entity1_id = ? AND entity2_id = ?)""",
+                    (e1_id, e2_id, e2_id, e1_id),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        "UPDATE relationships SET strength = strength + 3, relationship_type = ?, last_seen = ? WHERE id = ?",
+                        (rel_type, now, existing[0]),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO relationships
+                           (entity1_id, entity2_id, relationship_type, strength, last_seen)
+                           VALUES (?, ?, ?, 3, ?)""",
+                        (e1_id, e2_id, rel_type, now),
+                    )
+        conn.commit()
+        conn.close()
+        log.info(f"AI entity enhancement: {len(ai_entities)} entities, {len(ai_relationships)} relationships")
+    except Exception as e:
+        log.warning(f"AI entity DB update failed: {e}")
+
+
 # ── Sports team auto-discovery ──────────────────────────────────────────
 TEAM_DATABASE: dict[str, list[str]] = {
     "nfl": [
@@ -1074,6 +1209,7 @@ def write_daemon_status(
         "recent_patterns": (patterns or [])[:3],
         "memory_db": MEMORY_DB,
         "interval": INTERVAL,
+        "last_heartbeat": datetime.now().isoformat(),
     }
     try:
         os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
@@ -1125,6 +1261,7 @@ def main():
     last_active_app = ""
     idle_cycles = 0
     interest_check_cycles = 0
+    last_cycle_ts = time.time()
 
     # Initial interest detection
     initial_interests = detect_interests()
@@ -1143,6 +1280,13 @@ def main():
     while running:
         cycle_count += 1
         log.info(f"── Cycle {cycle_count} ──")
+
+        # Sleep/wake detection: if time delta > 2x interval, Mac was asleep
+        now_ts = time.time()
+        if cycle_count > 1 and now_ts - last_cycle_ts > INTERVAL * 2:
+            missed = int((now_ts - last_cycle_ts) / INTERVAL)
+            log.warning(f"!! Sleep/wake detected: missed ~{missed} cycles (gap was {now_ts - last_cycle_ts:.0f}s)")
+        last_cycle_ts = now_ts
 
         # 1. Screenshot
         screenshot_b64 = ""
@@ -1210,6 +1354,7 @@ def main():
                     if new_teams:
                         msg = f"Auto-discovered teams: {', '.join(new_teams)}"
                         log.info(msg)
+                    ai_enhance_entities()
                 log.info("Idle threshold reached — generating proactive observation")
                 context = build_context()
                 pro_reply = proactive_observation(context, active_app, screenshot_b64)

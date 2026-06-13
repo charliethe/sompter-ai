@@ -525,13 +525,24 @@ def _read_daemon_status() -> dict:
     try:
         with open(path) as f:
             data = json.load(f)
+            stale = True
+            hb = data.get("last_heartbeat", "")
+            if hb:
+                try:
+                    hb_dt = datetime.datetime.fromisoformat(hb)
+                    delta = datetime.datetime.now(datetime.timezone.utc).timestamp() - hb_dt.timestamp() if hb_dt.tzinfo else datetime.datetime.now().timestamp() - hb_dt.timestamp()
+                    stale = delta > 120
+                except Exception:
+                    pass
             return {
-                "running": data.get("status", "") in ("running", "running, no changes"),
+                "running": data.get("status", "") in ("running", "running, no changes") and not stale,
+                "stale": stale,
                 "pid": data.get("pid", 0),
                 "cycle": data.get("cycle", 0),
+                "status": data.get("status", ""),
             }
     except Exception:
-        return {"running": False, "pid": 0, "cycle": 0}
+        return {"running": False, "stale": True, "pid": 0, "cycle": 0, "status": "stopped"}
 
 
 def get_git_commit():

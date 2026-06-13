@@ -1095,10 +1095,17 @@ ipcMain.handle('getWatchStatus', async () => {
 ipcMain.handle('getDaemonStatus', async () => {
   const statusPath = path.join(__dirname, '..', '.sompter', 'daemon-status.json');
   try {
-    const data = fs.readFileSync(statusPath, 'utf-8');
-    return JSON.parse(data);
+    const data = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+    let stale = true;
+    if (data.last_heartbeat) {
+      const hb = new Date(data.last_heartbeat).getTime();
+      stale = (Date.now() - hb) > 120000;
+    }
+    data.stale = stale;
+    if (stale && data.status !== 'stopped') data.status = 'stale';
+    return data;
   } catch {
-    return { status: 'stopped', pid: 0, cycle: 0, observation_count: 0 };
+    return { status: 'stopped', pid: 0, cycle: 0, observation_count: 0, stale: true };
   }
 });
 
