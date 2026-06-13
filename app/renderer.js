@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restartDaemon: () => ipcRenderer.invoke('restartDaemon'),
   getMemoryData: () => ipcRenderer.invoke('getMemoryData'),
   searchMemory: (query) => ipcRenderer.invoke('searchMemory', query),
+  exportMemory: () => ipcRenderer.invoke('exportMemory'),
   getNotifPrefs: () => ipcRenderer.invoke('getNotifPrefs'),
   setNotifPrefs: (prefs) => ipcRenderer.invoke('setNotifPrefs', prefs),
   notesSend: (text) => ipcRenderer.invoke('notesSend', text),

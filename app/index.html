@@ -346,7 +346,10 @@
     <div id="memory-panel" class="hidden">
       <div id="memory-header">
         <span>🧠 Memory & Learning</span>
-        <button id="memory-close-btn" class="small-btn">✕</button>
+        <div style="display:flex;gap:4px">
+          <button id="memory-export-btn" class="small-btn" title="Export memory data">⬇ Export</button>
+          <button id="memory-close-btn" class="small-btn">✕</button>
+        </div>
       </div>
       <div id="memory-content">
         <div id="memory-stats" style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
@@ -1819,6 +1822,21 @@
     $('#memory-close-btn').addEventListener('click', () => {
       memoryVisible = false;
       memoryPanel.classList.add('hidden');
+    });
+    $('#memory-export-btn').addEventListener('click', async () => {
+      const btn = $('#memory-export-btn');
+      btn.textContent = '...';
+      try {
+        const r = await window.electronAPI.exportMemory();
+        if (r.success) {
+          btn.textContent = '✓ Saved';
+        } else {
+          btn.textContent = '✗ ' + (r.message || 'Failed');
+        }
+      } catch (e) {
+        btn.textContent = '✗ Error';
+      }
+      setTimeout(() => { btn.innerHTML = '⬇ Export'; }, 2000);
     });
 
     // Memory Search

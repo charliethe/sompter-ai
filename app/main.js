@@ -1242,6 +1242,43 @@ print(json.dumps({"observations":o,"entities":e,"summaries":s}))
   }
 });
 
+ipcMain.handle('exportMemory', async () => {
+  const memDir = path.join(__dirname, '..', '.sompter');
+  const dbPath = path.join(memDir, 'memory.db');
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Memory Data',
+    defaultPath: path.join(os.homedir(), `sompter-memory-export-${new Date().toISOString().slice(0,10)}.json`),
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (result.canceled || !result.filePath) return { success: false, message: 'Cancelled' };
+  const tmpScript = path.join(app.getPath('temp'), `sompter-export-${Date.now()}.py`);
+  const pyScript = `import json, sqlite3, sys
+db = sys.argv[1]
+out = sys.argv[2]
+con = sqlite3.connect(db)
+con.row_factory = sqlite3.Row
+data = {
+  "observations": [dict(r) for r in con.execute("SELECT * FROM observations ORDER BY id")],
+  "daily_summaries": [dict(r) for r in con.execute("SELECT * FROM daily_summaries ORDER BY date")],
+  "entities": [dict(r) for r in con.execute("SELECT * FROM entities ORDER BY mentions DESC")],
+  "relationships": [dict(r) for r in con.execute("SELECT e1.name AS entity1, e2.name AS entity2, r.relationship_type, r.strength FROM relationships r JOIN entities e1 ON r.entity1_id = e1.id JOIN entities e2 ON r.entity2_id = e2.id ORDER BY r.strength DESC")],
+}
+con.close()
+with open(out, "w") as f:
+  json.dump(data, f, indent=2)
+print(f"Exported {len(data['observations'])} observations, {len(data['entities'])} entities, {len(data['relationships'])} relationships")
+`;
+  try {
+    fs.writeFileSync(tmpScript, pyScript, 'utf-8');
+    const r = execFileSync(path.join(__dirname, '..', '.venv', 'bin', 'python3'), [tmpScript, dbPath, result.filePath], { timeout: 10000, maxBuffer: 1024 * 1024 });
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return { success: true, path: result.filePath, message: r.toString().trim() };
+  } catch (err) {
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return { success: false, message: err.message };
+  }
+});
+
 // ---- Notification Preferences IPC ----
 
 function getSettingsJson() {
