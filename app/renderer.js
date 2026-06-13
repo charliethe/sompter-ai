@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolder: (projectPath) => ipcRenderer.invoke('openFolder', { projectPath }),
   openFile: (filePath) => ipcRenderer.invoke('openFile', { filePath }),
   openREADME: () => ipcRenderer.invoke('openREADME'),
+  openExternalURL: (url) => ipcRenderer.invoke('openExternalURL', url),
 
   // Window state
   initWindow: (collapsed, y) => ipcRenderer.invoke('initWindow', collapsed, y),
@@ -98,6 +99,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startDaemon: () => ipcRenderer.invoke('startDaemon'),
   stopDaemon: () => ipcRenderer.invoke('stopDaemon'),
   restartDaemon: () => ipcRenderer.invoke('restartDaemon'),
+  getMemoryData: () => ipcRenderer.invoke('getMemoryData'),
   notesSend: (text) => ipcRenderer.invoke('notesSend', text),
   notesRead: () => ipcRenderer.invoke('notesRead'),
   notesOpenNote: () => ipcRenderer.invoke('notesOpenNote'),

@@ -24,6 +24,20 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Lazy import web_search (avoids loading heavy backend/server.py at module level)
+_web_search = None
+def get_web_search():
+    global _web_search
+    if _web_search is None:
+        try:
+            from backend.server import web_search as ws
+            _web_search = ws
+        except Exception:
+            _web_search = False
+    return _web_search
+
 # ── Config (overridable via env vars) ──────────────────────────────────
 BACKEND_URL = os.environ.get("SOMPTER_BACKEND_URL", "http://localhost:8787")
 INTERVAL = int(os.environ.get("SOMPTER_WATCH_INTERVAL", "10"))
@@ -37,7 +51,7 @@ PROJECT_DIR = os.environ.get(
 MEMORY_DB = os.environ.get("SOMPTER_MEMORY_DB",
                            os.path.join(PROJECT_DIR, ".sompter", "memory.db"))
 PID_FILE = "/tmp/sompter-watch-daemon.pid"
-PROACTIVE_THRESHOLD = int(os.environ.get("SOMPTER_PROACTIVE_THRESHOLD", "12"))
+PROACTIVE_THRESHOLD = int(os.environ.get("SOMPTER_PROACTIVE_THRESHOLD", "4"))
 STATUS_FILE = os.path.join(PROJECT_DIR, ".sompter", "daemon-status.json")
 
 # ── Logging ────────────────────────────────────────────────────────────
@@ -82,7 +96,7 @@ def take_screenshot() -> str:
             timeout=10,
         )
         result = subprocess.run(
-            ["sips", "-Z", "800", tmp_file, "--out", resized_file],
+            ["sips", "-Z", "500", tmp_file, "--out", resized_file],
             capture_output=True,
             timeout=10,
         )
@@ -553,20 +567,149 @@ def save_observation(
 
 # ── Main loop ──────────────────────────────────────────────────────────
 # ── Proactive suggestions ──────────────────────────────────────────────
+def get_tracked_teams() -> list[str]:
+    settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+    try:
+        with open(settings_path) as f:
+            s = json.load(f)
+            return s.get("tracked_teams", [])
+    except Exception:
+        return []
+
+
+def detect_interests() -> list[str]:
+    """Analyze recent observations to detect recurring topics of interest."""
+    interests = []
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        rows = conn.execute(
+            "SELECT notes_message, ai_reply FROM observations WHERE ai_reply != '' ORDER BY id DESC LIMIT 50"
+        ).fetchall()
+        conn.close()
+
+        from collections import Counter
+        topics = Counter()
+        interest_keywords = {
+            "weather": ["weather", "temperature", "forecast", "rain", "°f", "°c"],
+            "mlb": ["dodger", "mlb", "baseball", "world series", "playoff", "standings"],
+            "nfl": ["nfl", "football", "super bowl", "touchdown"],
+            "nba": ["nba", "basketball", "playoffs", "nba finals"],
+            "coding": ["python", "javascript", "code", "opencode", "app", "daemon", "backend"],
+            "news": ["news", "headline", "breaking", "election", "market"],
+            "stocks": ["stock", "market", "crypto", "bitcoin", "trading"],
+        }
+
+        for msg, reply in rows:
+            text = (msg + " " + reply).lower()
+            for topic, keywords in interest_keywords.items():
+                for kw in keywords:
+                    if kw in text:
+                        topics[topic] += 1
+                        break
+
+        for topic, count in topics.most_common(3):
+            if count >= 3:
+                interests.append(topic)
+    except Exception:
+        pass
+    return interests
+
+
+def save_interests_to_settings(interests: list[str]):
+    settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+    try:
+        with open(settings_path) as f:
+            s = json.load(f)
+        s["tracked_interests"] = interests
+        with open(settings_path, "w") as f:
+            json.dump(s, f, indent=2)
+    except Exception:
+        pass
+
+
 def proactive_observation(context: str, active_app: str) -> str | None:
+    # Always do a web search for interesting current info
+    search_results = ""
+    try:
+        ws = get_web_search()
+        if ws:
+            teams = get_tracked_teams()
+        settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+        interests = []
+        try:
+            with open(settings_path) as f:
+                s = json.load(f)
+                interests = s.get("tracked_interests", [])
+        except Exception:
+            pass
+        query_parts = []
+        if interests:
+            interest_topics = {"weather": "weather forecast", "mlb": "MLB baseball scores", "nfl": "NFL football",
+                               "nba": "NBA basketball", "coding": "programming tech news", "news": "breaking news",
+                               "stocks": "stock market"}
+            for i in interests:
+                if i in interest_topics:
+                    query_parts.append(interest_topics[i])
+        if teams:
+            query_parts.append(" OR ".join(teams) + " scores, news, standings")
+        if query_parts:
+            query = ", ".join(query_parts)
+            log.info(f"Proactive web search (interests: {', '.join(interests)}, teams: {', '.join(teams)}): {query}...")
+        else:
+            query = "latest news, sports scores, current events today"
+            log.info(f"Proactive web search: {query}...")
+        sr = ws(query)
+        if sr and sr != "No results found.":
+            search_results = sr[:1500]
+            log.info(f"Proactive web search: got {len(sr)} chars of results")
+        else:
+            log.info("Proactive web search: no results")
+    except Exception as e:
+        log.warning(f"Proactive web search failed: {e}")
+
+    teams = get_tracked_teams()
+    interests = []
+    try:
+        settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+        with open(settings_path) as f:
+            s = json.load(f)
+            interests = s.get("tracked_interests", [])
+    except Exception:
+        pass
     prompt = (
         "Generate a brief, interesting observation or suggestion based on "
-        "recent context. This is a proactive check — the user hasn't asked "
-        "anything. Be insightful: note what they're working on, suggest a "
-        "relevant fact or tip, or offer help. Keep it to 1-2 sentences."
+        "recent context and web search results. This is a proactive check "
+        "— the user hasn't asked anything specific. Surprise them with "
+        "something relevant: a news headline, sports score, weather update, "
+        "or helpful tip based on what they're working on. Keep it to 1-2 sentences."
     )
     system = (
-        "You are a proactive AI assistant. Based on recent screen context, "
-        "generate a helpful observation or suggestion. Be brief and relevant."
+        "You are a proactive AI assistant. Based on the screen context and "
+        "web search results below, generate a helpful observation or suggestion."
         f"\n\nActive app: {active_app}"
     )
+    if interests:
+        system += f"\n\nThe user is interested in: {', '.join(interests)}. Prioritize these topics."
+    if teams:
+        system += f"\n\nThe user follows these sports teams: {', '.join(teams)}. Prioritize their scores, standings, and news."
     if context:
         system += f"\n\n[RECENT CONTEXT]\n{context}"
+    if search_results:
+        tag = ", ".join(teams) + " scores, news" if teams else "latest news, sports, events"
+        system += f"\n\n[WEB SEARCH RESULTS — {tag}]\n{search_results}"
+
+    # Use fast moondream model for proactive observations (2s vs 57s)
+    try:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+        resp = requests.post(
+            "http://localhost:11434/api/chat",
+            json={"model": "moondream", "messages": messages, "stream": False},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("message", {}).get("content", "")
+    except Exception as e:
+        log.warning(f"Moondream proactive call failed, falling back to backend: {e}")
     return call_backend("", active_app, "", context, system_override=system)
 
 
@@ -637,6 +780,13 @@ def main():
     last_notes_messages: tuple[str, ...] = ()
     last_active_app = ""
     idle_cycles = 0
+    interest_check_cycles = 0
+
+    # Initial interest detection
+    initial_interests = detect_interests()
+    if initial_interests:
+        save_interests_to_settings(initial_interests)
+        log.info(f"Detected interests at startup: {initial_interests}")
 
     # Main loop
     while running:
@@ -675,32 +825,36 @@ def main():
         notes_messages_tuple = tuple(notes_msgs)
 
         # ── Change detection ─────────────────────────────────────
-        # Screenshot hash is too noisy (OS compositor changes bytes each frame),
-        # so only compare semantic signals: notes messages and active app.
         something_changed = (
             notes_messages_tuple != last_notes_messages
             or active_app != last_active_app
         )
-
-        # Update tracked state
         last_notes_messages = notes_messages_tuple
         last_active_app = active_app
 
         if not something_changed:
             idle_cycles += 1
             log.info(f"No changes detected (idle {idle_cycles}/{PROACTIVE_THRESHOLD})")
-            # Still write status so UI stays fresh
+            # Write status so UI stays fresh
             _patterns_list = detect_patterns()
             conn = sqlite3.connect(MEMORY_DB)
             obs_count = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
             conn.close()
             write_daemon_status(
-                cycle_count, "running, no changes", active_app, notes_msg,
+                cycle_count, "running, no changes", active_app, "",
                 obs_count, len(_patterns_list), _patterns_list,
             )
-            # Proactive suggestion on prolonged idle
+            # Proactive web search on prolonged idle
             if idle_cycles >= PROACTIVE_THRESHOLD:
                 idle_cycles = 0
+                interest_check_cycles += 1
+                # Re-detect interests every 10 proactive cycles
+                if interest_check_cycles >= 10:
+                    interest_check_cycles = 0
+                    fresh = detect_interests()
+                    if fresh:
+                        save_interests_to_settings(fresh)
+                        log.info(f"Re-detected interests: {fresh}")
                 log.info("Idle threshold reached — generating proactive observation")
                 context = build_context()
                 pro_reply = proactive_observation(context, active_app)

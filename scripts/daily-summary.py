@@ -155,7 +155,7 @@ def notes_ensure_log_exists():
 def notes_append(note_name: str, text: str):
     tmp_file = tempfile.mktemp(suffix=".txt", prefix="sompter-daily-")
     clean = tmp_file.replace("\\", "\\\\").replace('"', '\\"')
-    html = f"<div><br><b>[Daily Summary {date.today().isoformat()}]:</b><br>{text}</div>"
+    html = f"<div><br><b>[Daily Summary {date.today().isoformat()}]:</b><br>{esc_html(text)}</div>"
     Path(tmp_file).write_text(html, "utf-8")
     script = f"""
         try

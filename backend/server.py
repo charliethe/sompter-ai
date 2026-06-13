@@ -21,7 +21,9 @@ from starlette.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from project root regardless of CWD
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_project_root, ".env"), override=True)
 
 app = FastAPI()
 
@@ -750,9 +752,11 @@ def find_opencode_server() -> int | None:
     for port in OPCODE_SERVE_PORTS:
         try:
             auth = ("opencode", OPCODE_SERVER_PASSWORD) if OPCODE_SERVER_PASSWORD else None
-            r = requests.get(f"http://localhost:{port}/global/health", auth=auth, timeout=1)
+            r = requests.get(f"http://localhost:{port}/global/health", auth=auth, timeout=2)
             if r.status_code == 200:
                 return port
+        except requests.exceptions.ConnectionError:
+            continue
         except Exception:
             continue
     return None
@@ -1165,16 +1169,33 @@ async def watch_analyze_screen(req: WatchAnalyzeRequest):
             system_prompt += f"\n\nThe user wrote in their notes: {req.notes_message}. Answer their question directly."
 
         has_web = bool(search_context and search_context != "No results found.")
+        has_question = bool(req.notes_message)
+        if has_web and has_question:
+            instruct = (
+                "The user asked a question and Web Search RESULTS are available above in [SEARCH RESULTS]. "
+                "You MUST use those specific web search results to answer the user's question directly. "
+                "Do not offer to search — the results are already here. Report facts, dates, scores, and news from them."
+            )
+        elif has_web and not has_question:
+            instruct = (
+                "Web Search RESULTS are available above in [SEARCH RESULTS]. "
+                "Summarize the most interesting or relevant current information — news, sports, weather, "
+                "or trending topics. The user didn't ask a specific question, so be proactive: "
+                "report what's happening in the world based on the search results."
+            )
+        elif not has_web and has_question:
+            instruct = (
+                "The user left a message in their notes. Answer their question based on what you see on screen."
+            )
+        else:
+            instruct = (
+                "Look at what's on screen and report anything interesting you see."
+            )
         prompt = (
             "Look at everything on screen — apps, tabs, code, news, scores, documents, etc. "
             "Report on what's happening in detail. If you see sports scores, news headlines, "
             "or market data on screen, report what you see. "
-            + ("The user asked a question and Web Search RESULTS are available above in [SEARCH RESULTS]. "
-               "You MUST use those specific web search results to answer the user's question directly. "
-               "Do not offer to search — the results are already here. Report facts, dates, scores, and news from them."
-               if has_web else
-               "If the user left a message in their notes, answer it directly."
-            ) + " "
+            + instruct + " "
             "Be informative and proactive."
         )
         b64 = req.screenshot_b64 if req.screenshot_b64 else None
@@ -1198,6 +1219,7 @@ DEFAULT_SETTINGS = {
     "ollama_model": "gemma3:12b",
     "gemini_model": "gemini-2.0-flash",
     "openai_model": "gpt-4o-mini",
+    "tracked_teams": [],
 }
 
 
@@ -1220,7 +1242,7 @@ def save_settings(data: dict):
 
 
 def refresh_env():
-    load_dotenv(override=True)
+    load_dotenv(os.path.join(_project_root, ".env"), override=True)
     global ollama_model, gemini_api_key, gemini_api_key_raw, gemini_model, openai_api_key, openai_api_key_raw, openai_model
     ollama_model = os.getenv("OLLAMA_MODEL", "gemma3:12b")
     gemini_api_key_raw = os.getenv("GEMINI_API_KEY", "")
@@ -1240,7 +1262,6 @@ def mask_key(key: str) -> str:
 def write_env_key(key_name: str, value: str) -> tuple[bool, str]:
     try:
         lines = []
-        found = False
         if os.path.isfile(DOTENV_PATH):
             with open(DOTENV_PATH) as f:
                 lines = f.readlines()
@@ -1278,6 +1299,7 @@ async def settings_get():
         "gemini_key_masked": mask_key(gemini_api_key) if gemini_api_key else "",
         "openai_key_masked": mask_key(openai_api_key) if openai_api_key else "",
         "active_provider": "ollama" if ollama_available() else "gemini" if gemini_api_key else "openai" if openai_api_key else "none",
+        "tracked_teams": s.get("tracked_teams", []),
     }
 
 
@@ -1291,6 +1313,7 @@ class SettingsSaveRequest(BaseModel):
     openai_model: str | None = None
     gemini_key: str | None = None
     openai_key: str | None = None
+    tracked_teams: list[str] | None = None
 
 
 @app.post("/api/settings")
@@ -1311,6 +1334,8 @@ async def settings_save(req: SettingsSaveRequest):
             non_secret["openai_model"] = req.openai_model
         if req.project_path is not None:
             non_secret["project_path"] = req.project_path
+        if req.tracked_teams is not None:
+            non_secret["tracked_teams"] = req.tracked_teams
         save_settings(non_secret)
 
         if req.gemini_key:

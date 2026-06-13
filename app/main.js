@@ -1,6 +1,6 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, dialog, Tray, Menu, Notification, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, dialog, Tray, Menu, Notification, nativeImage, shell } = require('electron');
 const path = require('path');
-const { execFile, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 
@@ -590,6 +590,10 @@ ipcMain.handle('openREADME', async () => {
   }
 });
 
+ipcMain.handle('openExternalURL', async (_event, url) => {
+  shell.openExternal(url);
+});
+
 ipcMain.handle('openPrivacySettings', async (_event, pane) => {
   const url = `x-apple.systempreferences:com.apple.preference.security?${pane}`;
   try {
@@ -618,6 +622,7 @@ ipcMain.handle('runAction', async (_event, { action, params }) => {
 
 ipcMain.handle('runBrowserAction', async (_event, { action, params }) => {
   const BROWSER_ENDPOINTS = {
+    browser_start: '/api/browser/start',
     browser_click: '/api/browser/click',
     browser_type: '/api/browser/type',
     browser_navigate: '/api/browser/navigate',
@@ -1096,6 +1101,42 @@ ipcMain.handle('notesOpenNote', async () => {
     } catch (err2) {
       return { success: false, message: err2.message };
     }
+  }
+});
+
+// ---- Memory / Learning IPC ----
+
+ipcMain.handle('getMemoryData', async () => {
+  const memDir = path.join(__dirname, '..', '.sompter');
+  const dbPath = path.join(memDir, 'memory.db');
+  const settingsPath = path.join(memDir, 'settings.json');
+  try {
+    let data = { observations: [], summaries: [], patterns: [], stats: { observations: 0, summaries: 0, patterns: 0 }, interests: [] };
+    try {
+      const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      data.interests = s.tracked_interests || [];
+    } catch {}
+    const tmpScript = path.join(app.getPath('temp'), `sompter-memory-${Date.now()}.py`);
+    const pyScript = `import json,sqlite3,os,sys
+db = sys.argv[1]
+con = sqlite3.connect(db)
+con.row_factory = sqlite3.Row
+o = [dict(r) for r in con.execute("SELECT id,timestamp,active_app,substr(notes_message,1,80)as m,substr(ai_reply,1,100)as r FROM observations ORDER BY id DESC LIMIT 15")]
+s = [dict(r) for r in con.execute("SELECT date,substr(summary,1,200)as summary FROM daily_summaries ORDER BY date DESC LIMIT 5")]
+st = {"observations":con.execute("SELECT COUNT(*)FROM observations").fetchone()[0],"summaries":con.execute("SELECT COUNT(*)FROM daily_summaries").fetchone()[0]}
+con.close()
+print(json.dumps({"observations":o,"summaries":s,"stats":st}))
+`;
+    fs.writeFileSync(tmpScript, pyScript, 'utf-8');
+    const r = execFileSync(path.join(__dirname, '..', '.venv', 'bin', 'python3'), [tmpScript, dbPath], { timeout: 5000, maxBuffer: 1024 * 1024 });
+    const result = JSON.parse(r.toString().trim());
+    data.observations = result.observations || [];
+    data.summaries = result.summaries || [];
+    data.stats = result.stats || {};
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return data;
+  } catch (err) {
+    return { observations: [], summaries: [], patterns: [], stats: { observations: 0, summaries: 0, patterns: 0 }, interests: [] };
   }
 });
 

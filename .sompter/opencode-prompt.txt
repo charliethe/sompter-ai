@@ -3,6 +3,4 @@ Find the issue, explain it shortly, make safe code changes only, and run tests i
 Do not delete files. Do not use sudo. Do not touch .env/auth/API keys.
 If a risky command is needed, stop and explain.
 
-Screenshot context: Here's a description of the screenshot:
-
-The image shows a dark-themed desktop with multiple windows open. A program called "Sompter AI" is prominently displayed on the right side, featuring options related to screen recording and project management; it seems like someone might be configuring this software or working within its interface. On the left, there's a weather widget displaying information for Charleston, SC, along with what appears to be a personal photo visible in another window.
+Screenshot context: The screenshot depicts a software development environment likely related to smartwatch interface design, featuring multiple panels and code windows within an Electron application. A task is underway to optimize image resolution from 800x600 pixels and potentially switch file formats; the progress indicates a 96% improvement and references building a DMG (disk image) file. There's also discussion about "Smart Fix" functionality, possibly related to automated code or UI adjustments.

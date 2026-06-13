@@ -2402,3 +2402,66 @@ header::after {
 #preset-actions .preset-action-btn:first-child:hover {
   box-shadow: 0 0 16px rgba(124,58,237,0.5);
 }
+
+/* Memory Panel */
+#memory-panel {
+  background: #1e1e38;
+  border: 1px solid #3d3d5c;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+#memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  color: #c4b5fd;
+}
+#memory-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.memory-stat-box {
+  background: #2a2a4e;
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 70px;
+}
+.memory-stat-num {
+  font-size: 16px;
+  font-weight: 700;
+  color: #c4b5fd;
+}
+.memory-stat-label {
+  font-size: 9px;
+  color: #8888aa;
+  text-transform: uppercase;
+}
+.memory-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-top: 4px;
+}
+#memory-patterns-list div {
+  padding: 3px 6px;
+  margin: 2px 0;
+  background: #2a2a4e;
+  border-radius: 4px;
+}
+#memory-observations-list div, #memory-summaries-list div {
+  padding: 4px 6px;
+  margin: 2px 0;
+  background: #2a2a4e;
+  border-radius: 4px;
+  line-height: 1.3;
+}

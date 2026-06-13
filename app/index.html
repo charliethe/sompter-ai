@@ -45,6 +45,7 @@
       <button class="gear-item" id="gear-services">🛠 Services</button>
       <button class="gear-item" id="gear-diagnostics">🔬 Diagnostics</button>
       <button class="gear-item" id="gear-setup">⚙ Setup</button>
+      <button class="gear-item" id="gear-memory">🧠 Memory</button>
       <button class="gear-item" id="gear-onboarding">📖 Setup Guide</button>
       <button class="gear-item" id="gear-watch">👁 Watch</button>
       <button class="gear-item" id="gear-about">ℹ️ About</button>
@@ -298,6 +299,14 @@
             <button id="daemon-restart-btn" class="small-btn" style="flex:1">Restart</button>
           </div>
         </div>
+        <div id="watch-tracked-teams" style="margin-top:8px">
+          <div class="watch-section-title">Tracked Sports Teams</div>
+          <div id="watch-teams-list" style="margin:4px 0"></div>
+          <div style="display:flex;gap:4px">
+            <input id="watch-team-input" type="text" placeholder="e.g. Los Angeles Dodgers" style="flex:1;background:#1a1a2e;color:#e0e0ff;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px" />
+            <button id="watch-team-add-btn" class="small-btn">+</button>
+          </div>
+        </div>
         <div id="watch-info">
           <div class="watch-section-title">Last Cycle</div>
           <div class="watch-row">
@@ -322,6 +331,27 @@
           <button id="watch-open-notes-btn" class="setup-btn">📝 Open Sompter Chat</button>
           <button id="watch-emergency-btn" class="setup-btn watch-emergency">🛑 Emergency Stop</button>
         </div>
+      </div>
+    </div>
+
+    <div id="memory-panel" class="hidden">
+      <div id="memory-header">
+        <span>🧠 Memory & Learning</span>
+        <button id="memory-close-btn" class="small-btn">✕</button>
+      </div>
+      <div id="memory-content">
+        <div id="memory-stats" style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <div class="memory-stat-box"><span class="memory-stat-num" id="mem-obs-count">—</span><span class="memory-stat-label">Observations</span></div>
+          <div class="memory-stat-box"><span class="memory-stat-num" id="mem-summary-count">—</span><span class="memory-stat-label">Summaries</span></div>
+          <div class="memory-stat-box"><span class="memory-stat-num" id="mem-pattern-count">—</span><span class="memory-stat-label">Patterns</span></div>
+          <div class="memory-stat-box"><span class="memory-stat-num" id="mem-interests-list">—</span><span class="memory-stat-label">Interests</span></div>
+        </div>
+        <div class="memory-section-title">Detected Patterns</div>
+        <div id="memory-patterns-list" style="margin-bottom:8px;font-size:11px;color:#a0a0c0"></div>
+        <div class="memory-section-title">Recent Observations</div>
+        <div id="memory-observations-list" style="max-height:200px;overflow-y:auto;font-size:11px"></div>
+        <div class="memory-section-title">Daily Summaries</div>
+        <div id="memory-summaries-list" style="max-height:150px;overflow-y:auto;font-size:11px"></div>
       </div>
     </div>
 
@@ -811,7 +841,7 @@
       if (r.success) {
         if (next === 'browser') {
           // Start browser with correct headless mode
-          await window.electronAPI.runBrowserAction('start', { headless: !nextVisible });
+          await window.electronAPI.runBrowserAction('browser_start', { headless: !nextVisible });
         }
         pollHealth();
       }
@@ -1659,6 +1689,7 @@
       if (watchVisible) {
         refreshWatchStatus();
         pollDaemonStatus();
+        loadTrackedTeams();
         if (!daemonStatusInterval) {
           daemonStatusInterval = setInterval(pollDaemonStatus, 5000);
         }
@@ -1668,6 +1699,60 @@
           daemonStatusInterval = null;
         }
       }
+    });
+
+    // Memory Panel
+    let memoryVisible = false;
+    const memoryPanel = $('#memory-panel');
+
+    async function refreshMemoryPanel() {
+      try {
+        const data = await window.electronAPI.getMemoryData();
+        const stats = data.stats || {};
+        setText('mem-obs-count', String(stats.observations || 0));
+        setText('mem-summary-count', String(stats.summaries || 0));
+        setText('mem-pattern-count', String(data.patterns ? data.patterns.length : 0));
+        setText('mem-interests-list', (data.interests && data.interests.length) ? data.interests.join(', ') : 'none');
+
+        const pl = $('#memory-patterns-list');
+        pl.innerHTML = '';
+        (data.patterns || []).forEach(p => {
+          const d = document.createElement('div');
+          d.textContent = p;
+          pl.appendChild(d);
+        });
+        if (!data.patterns || !data.patterns.length) pl.innerHTML = '<div style="color:#666">No patterns detected yet.</div>';
+
+        const ol = $('#memory-observations-list');
+        ol.innerHTML = '';
+        (data.observations || []).forEach(o => {
+          const d = document.createElement('div');
+          d.innerHTML = `<span style="color:#8888aa">${o.timestamp ? o.timestamp.slice(11,19) : ''}</span> <span style="color:#a78bfa">${o.active_app || ''}</span> — ${o.m || o.notes_message || o.r || ''}`;
+          ol.appendChild(d);
+        });
+        if (!data.observations || !data.observations.length) ol.innerHTML = '<div style="color:#666">No observations yet.</div>';
+
+        const sl = $('#memory-summaries-list');
+        sl.innerHTML = '';
+        (data.summaries || []).forEach(s => {
+          const d = document.createElement('div');
+          d.innerHTML = `<span style="color:#8888aa">${s.date || ''}</span> ${(s.summary || '').slice(0, 150)}`;
+          sl.appendChild(d);
+        });
+        if (!data.summaries || !data.summaries.length) sl.innerHTML = '<div style="color:#666">No summaries yet.</div>';
+      } catch (e) { console.error('Memory panel error:', e); }
+    }
+
+    $('#gear-memory').addEventListener('click', () => {
+      hideAllPanels();
+      hideAllPanelsExcept('memory-panel');
+      memoryVisible = !memoryVisible;
+      memoryPanel.classList.toggle('hidden', !memoryVisible);
+      if (memoryVisible) refreshMemoryPanel();
+    });
+    $('#memory-close-btn').addEventListener('click', () => {
+      memoryVisible = false;
+      memoryPanel.classList.add('hidden');
     });
 
     $('#gear-about').addEventListener('click', () => {
@@ -2162,7 +2247,7 @@
           streamingMsgEl.querySelector('.msg-content').classList.remove('streaming');
         }
         const hasError = streamingFullText && (
-          streamingFullText.includes('Error:') || streamingFullText.includes('AI error')
+          streamingFullText.startsWith('Error:') || streamingFullText === 'Error' || streamingFullText === 'AI error'
         );
         addHistoryEntry('chat', streamingPrompt, streamingFullText, hasError ? 'failed' : 'success');
         streamingMsgEl = null;
@@ -2766,7 +2851,7 @@
     });
 
     watchOpenNotesBtn.addEventListener('click', async () => {
-      const r = await window.electronAPI.notesOpenNote();
+      await window.electronAPI.notesOpenNote();
     });
 
     $('#watch-close-btn').addEventListener('click', () => {
@@ -2844,6 +2929,46 @@
       await window.electronAPI.restartDaemon();
       setTimeout(pollDaemonStatus, 3000);
       $('#daemon-restart-btn').textContent = 'Restart';
+    });
+
+    // ---- Tracked Teams ----
+    async function loadTrackedTeams() {
+      try {
+        const settings = await window.electronAPI.getSettings();
+        const teams = settings.tracked_teams || [];
+        const list = $('#watch-teams-list');
+        list.innerHTML = '';
+        teams.forEach(t => {
+          const tag = document.createElement('span');
+          tag.style.cssText = 'display:inline-block;background:#2a2a4e;color:#e0e0ff;border-radius:4px;padding:2px 8px;margin:2px 4px 2px 0;font-size:11px;cursor:pointer';
+          tag.textContent = t + ' ×';
+          tag.title = 'Remove ' + t;
+          tag.addEventListener('click', async () => {
+            const s = await window.electronAPI.getSettings();
+            s.tracked_teams = (s.tracked_teams || []).filter(x => x !== t);
+            await window.electronAPI.saveSettings(s);
+            loadTrackedTeams();
+          });
+          list.appendChild(tag);
+        });
+      } catch (e) { console.error('Failed to load tracked teams:', e); }
+    }
+    $('#watch-team-add-btn').addEventListener('click', async () => {
+      const input = $('#watch-team-input');
+      const team = input.value.trim();
+      if (!team) return;
+      try {
+        const settings = await window.electronAPI.getSettings();
+        const teams = settings.tracked_teams || [];
+        if (!teams.includes(team)) teams.push(team);
+        settings.tracked_teams = teams;
+        await window.electronAPI.saveSettings(settings);
+        input.value = '';
+        loadTrackedTeams();
+      } catch (e) { console.error('Failed to add team:', e); }
+    });
+    $('#watch-team-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('#watch-team-add-btn').click();
     });
 
     // ---- About Panel ----
@@ -2929,6 +3054,11 @@
 
     $('#about-readme-btn').addEventListener('click', async () => {
       await window.electronAPI.openREADME();
+    });
+
+    $('#about-ollama-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.electronAPI.openExternalURL('https://ollama.ai');
     });
 
     $('#about-diag-btn').addEventListener('click', () => {
@@ -3038,7 +3168,7 @@
     }
 
     function hideAllPanelsExcept(excludeId) {
-      const panels = ['#prompts-panel', '#history-panel', '#setup-panel', '#models-panel', '#diagnostics-panel', '#services-panel', '#onboarding-panel', '#watch-panel', '#about-panel'];
+      const panels = ['#prompts-panel', '#history-panel', '#setup-panel', '#models-panel', '#diagnostics-panel', '#services-panel', '#onboarding-panel', '#watch-panel', '#about-panel', '#memory-panel'];
       panels.forEach(sel => {
         if (sel !== '#' + excludeId) {
           const p = document.querySelector(sel);
