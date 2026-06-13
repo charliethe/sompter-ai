@@ -1188,8 +1188,10 @@ con.row_factory = sqlite3.Row
 o = [dict(r) for r in con.execute("SELECT id,timestamp,active_app,substr(notes_message,1,80)as m,substr(ai_reply,1,100)as r FROM observations ORDER BY id DESC LIMIT 15")]
 s = [dict(r) for r in con.execute("SELECT date,substr(summary,1,200)as summary FROM daily_summaries ORDER BY date DESC LIMIT 5")]
 st = {"observations":con.execute("SELECT COUNT(*)FROM observations").fetchone()[0],"summaries":con.execute("SELECT COUNT(*)FROM daily_summaries").fetchone()[0]}
+e = [dict(r) for r in con.execute("SELECT name,type,mentions,substr(last_seen,1,10)as last_seen FROM entities ORDER BY mentions DESC LIMIT 15")]
+rels = [dict(r) for r in con.execute("SELECT e1.name AS entity1,e2.name AS entity2,r.strength FROM relationships r JOIN entities e1 ON r.entity1_id=e1.id JOIN entities e2 ON r.entity2_id=e2.id ORDER BY r.strength DESC LIMIT 10")]
 con.close()
-print(json.dumps({"observations":o,"summaries":s,"stats":st}))
+print(json.dumps({"observations":o,"summaries":s,"stats":st,"entities":e,"relationships":rels}))
 `;
     fs.writeFileSync(tmpScript, pyScript, 'utf-8');
     const r = execFileSync(path.join(__dirname, '..', '.venv', 'bin', 'python3'), [tmpScript, dbPath], { timeout: 5000, maxBuffer: 1024 * 1024 });

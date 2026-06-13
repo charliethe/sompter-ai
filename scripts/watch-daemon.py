@@ -454,6 +454,30 @@ def init_memory():
             created_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS entities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            type TEXT NOT NULL,
+            mentions INTEGER DEFAULT 1,
+            first_seen TEXT,
+            last_seen TEXT,
+            context TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity1_id INTEGER NOT NULL,
+            entity2_id INTEGER NOT NULL,
+            relationship_type TEXT DEFAULT 'related_to',
+            strength INTEGER DEFAULT 1,
+            last_seen TEXT,
+            FOREIGN KEY (entity1_id) REFERENCES entities(id),
+            FOREIGN KEY (entity2_id) REFERENCES entities(id),
+            UNIQUE(entity1_id, entity2_id, relationship_type)
+        )
+    """)
     conn.commit()
     conn.close()
     log.info(f"Memory DB initialized at {MEMORY_DB}")
@@ -564,6 +588,13 @@ def build_context() -> str:
                 f"around this time of day):\n{pattern_lines}\n"
                 "Proactively address these if relevant."
             )
+
+        graph_ctx = get_graph_context()
+        if graph_ctx:
+            if context:
+                context += "\n"
+            context += f"\nKnowledge Graph:\n{graph_ctx}"
+
         return context
     except Exception as e:
         log.warning(f"Failed to build context: {e}")
@@ -594,8 +625,187 @@ def save_observation(
         )
         conn.commit()
         conn.close()
+        update_entities_and_relationships(notes_msg, ai_reply, active_app)
     except Exception as e:
         log.error(f"Failed to save observation: {e}")
+
+
+# ── Knowledge Graph (Entities + Relationships) ─────────────────────────
+ENTITY_TYPES = ["person", "technology", "project", "organization", "location", "sports_team", "topic"]
+
+TECH_KEYWORDS = {
+    "python", "javascript", "typescript", "rust", "go", "react", "node.js", "electron",
+    "fastapi", "flask", "django", "sqlite", "postgresql", "redis", "docker",
+    "opencode", "ollama", "gemma", "moondream", "gemini", "openai", "playwright",
+    "launchd", "pytest", "git", "github", "sqlalchemy", "uvicorn", "sse",
+    "apple script", "osascript", "sips", "screencapture",
+}
+
+LOCATION_KEYWORDS = {
+    "new york", "los angeles", "san francisco", "chicago", "seattle", "austin",
+    "boston", "london", "tokyo", "berlin", "paris", "sydney", "toronto",
+}
+
+
+def classify_entity(name: str) -> str:
+    lower = name.lower()
+    if lower in TECH_KEYWORDS:
+        return "technology"
+    if lower in LOCATION_KEYWORDS:
+        return "location"
+    for league, teams in TEAM_DATABASE.items():
+        for team in teams:
+            if lower == team:
+                return "sports_team"
+    if lower in ("sompter", "sompter ai"):
+        return "project"
+    return "topic"
+
+
+def extract_entities(text: str) -> list[tuple[str, str]]:
+    entities = []
+    seen = set()
+    lower = text.lower()
+
+    for kw in TECH_KEYWORDS:
+        if kw in lower:
+            if kw not in seen:
+                seen.add(kw)
+                entities.append((kw.title(), "technology"))
+    for kw in LOCATION_KEYWORDS:
+        if kw in lower:
+            if kw not in seen:
+                seen.add(kw)
+                entities.append((kw.title(), "location"))
+    for league, teams in TEAM_DATABASE.items():
+        for team in teams:
+            if team in lower:
+                if team not in seen:
+                    seen.add(team)
+                    entities.append((team.title(), "sports_team"))
+
+    matches = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})\b', text)
+    for m in matches:
+        m_lower = m.lower()
+        if m_lower in seen or len(m) < 4:
+            continue
+        if m_lower in ("the", "this", "that", "these", "those", "what", "when", "where", "why", "how"):
+            continue
+        seen.add(m_lower)
+        etype = classify_entity(m_lower)
+        entities.append((m, etype))
+
+    return entities
+
+
+def update_entities_and_relationships(notes_msg: str, ai_reply: str, active_app: str):
+    all_text = f"{notes_msg} {ai_reply} {active_app}"
+    entities = extract_entities(all_text)
+    if not entities:
+        return
+    now = datetime.now().isoformat()
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        entity_ids = {}
+        for name, etype in entities:
+            row = conn.execute(
+                "SELECT id FROM entities WHERE name = ?", (name,)
+            ).fetchone()
+            if row:
+                eid = row[0]
+                conn.execute(
+                    """UPDATE entities SET mentions = mentions + 1, last_seen = ?
+                       WHERE id = ?""",
+                    (now, eid),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO entities (name, type, mentions, first_seen, last_seen, context)
+                       VALUES (?, ?, 1, ?, ?, '')""",
+                    (name, etype, now, now),
+                )
+                eid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            entity_ids[name] = eid
+
+        names = list(entity_ids.keys())
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                e1 = entity_ids[names[i]]
+                e2 = entity_ids[names[j]]
+                row = conn.execute(
+                    """SELECT id, strength FROM relationships
+                       WHERE (entity1_id = ? AND entity2_id = ?)
+                          OR (entity1_id = ? AND entity2_id = ?)""",
+                    (e1, e2, e2, e1),
+                ).fetchone()
+                if row:
+                    rid, strength = row
+                    conn.execute(
+                        """UPDATE relationships SET strength = ?, last_seen = ?
+                           WHERE id = ?""",
+                        (strength + 1, now, rid),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO relationships
+                           (entity1_id, entity2_id, relationship_type, strength, last_seen)
+                           VALUES (?, ?, ?, 1, ?)""",
+                        (e1, e2, "related_to", now),
+                    )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"Knowledge graph update failed: {e}")
+
+
+def get_top_entities(limit: int = 20) -> list[dict]:
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT name, type, mentions, last_seen FROM entities
+               ORDER BY mentions DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def get_top_relationships(limit: int = 20) -> list[dict]:
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT e1.name AS entity1, e1.type AS type1, e2.name AS entity2,
+                      e2.type AS type2, r.strength, r.relationship_type
+               FROM relationships r
+               JOIN entities e1 ON r.entity1_id = e1.id
+               JOIN entities e2 ON r.entity2_id = e2.id
+               ORDER BY r.strength DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def get_graph_context(max_entities: int = 8) -> str:
+    entities = get_top_entities(max_entities)
+    rels = get_top_relationships(6)
+    parts = []
+    if entities:
+        parts.append("Known entities: " + ", ".join(
+            f"{e['name']} ({e['type']})" for e in entities
+        ))
+    if rels:
+        parts.append("Relationships: " + "; ".join(
+            f"{r['entity1']} → {r['entity2']} ({r['relationship_type']}, strength {r['strength']})"
+            for r in rels
+        ))
+    return " | ".join(parts) if parts else ""
 
 
 # ── Main loop ──────────────────────────────────────────────────────────

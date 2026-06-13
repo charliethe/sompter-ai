@@ -353,10 +353,14 @@
         </div>
         <div class="memory-section-title">Detected Patterns</div>
         <div id="memory-patterns-list" style="margin-bottom:8px;font-size:11px;color:#a0a0c0"></div>
+        <div class="memory-section-title">Entities</div>
+        <div id="memory-entities-list" style="margin-bottom:8px;font-size:11px;max-height:100px;overflow-y:auto"></div>
+        <div class="memory-section-title">Relationships</div>
+        <div id="memory-relationships-list" style="margin-bottom:8px;font-size:11px;max-height:100px;overflow-y:auto"></div>
         <div class="memory-section-title">Recent Observations</div>
-        <div id="memory-observations-list" style="max-height:200px;overflow-y:auto;font-size:11px"></div>
+        <div id="memory-observations-list" style="max-height:150px;overflow-y:auto;font-size:11px"></div>
         <div class="memory-section-title">Daily Summaries</div>
-        <div id="memory-summaries-list" style="max-height:150px;overflow-y:auto;font-size:11px"></div>
+        <div id="memory-summaries-list" style="max-height:120px;overflow-y:auto;font-size:11px"></div>
       </div>
     </div>
 
@@ -1757,6 +1761,24 @@
           pl.appendChild(d);
         });
         if (!data.patterns || !data.patterns.length) pl.innerHTML = '<div style="color:#666">No patterns detected yet.</div>';
+
+        const el = $('#memory-entities-list');
+        el.innerHTML = '';
+        (data.entities || []).forEach(e => {
+          const d = document.createElement('div');
+          d.innerHTML = `<span style="color:#a78bfa">${e.name}</span> <span style="color:#8888aa;font-size:10px">${e.type}</span> <span style="color:#666;font-size:10px">(${e.mentions}x, ${e.last_seen || ''})</span>`;
+          el.appendChild(d);
+        });
+        if (!data.entities || !data.entities.length) el.innerHTML = '<div style="color:#666">No entities extracted yet.</div>';
+
+        const rl = $('#memory-relationships-list');
+        rl.innerHTML = '';
+        (data.relationships || []).forEach(r => {
+          const d = document.createElement('div');
+          d.innerHTML = `<span style="color:#f0c040">${r.entity1}</span> → <span style="color:#a78bfa">${r.entity2}</span> <span style="color:#666;font-size:10px">(strength ${r.strength})</span>`;
+          rl.appendChild(d);
+        });
+        if (!data.relationships || !data.relationships.length) rl.innerHTML = '<div style="color:#666">No relationships yet.</div>';
 
         const ol = $('#memory-observations-list');
         ol.innerHTML = '';
