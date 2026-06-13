@@ -647,7 +647,7 @@ def save_interests_to_settings(interests: list[str]):
         pass
 
 
-def proactive_observation(context: str, active_app: str) -> str | None:
+def proactive_observation(context: str, active_app: str, screenshot_b64: str = "") -> str | None:
     # Always do a web search for interesting current info
     search_results = ""
     try:
@@ -687,71 +687,38 @@ def proactive_observation(context: str, active_app: str) -> str | None:
     except Exception as e:
         log.warning(f"Proactive web search failed: {e}")
 
-    teams = get_tracked_teams()
-    interests = []
+    # Build observation: combine moondream screen description with web search facts
+    moondream_reply = ""
     try:
-        settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
-        with open(settings_path) as f:
-            s = json.load(f)
-            interests = s.get("tracked_interests", [])
-    except Exception:
-        pass
-    prompt = (
-        "Generate one brief observation (1 sentence max) based on the web search results below. "
-        "Pick the most specific and concrete item from the search results: "
-        "a sports score, weather forecast, news headline, or tech story. "
-        "Format: 'Noticed: <specific detail from search results>.'. "
-        "Do NOT make up facts. Only use what is in the web search results."
-    )
-    system = (
-        "You are a proactive AI assistant. Your job is to find the single most "
-        "interesting specific fact from the web search results and report it."
-        f"\n\nActive app: {active_app}"
-    )
-    if interests:
-        system += f"\n\nThe user is interested in: {', '.join(interests)}. Prioritize these topics."
-    if teams:
-        system += f"\n\nThe user follows these sports teams: {', '.join(teams)}. Prioritize their scores, standings, and news."
-    if context:
-        system += f"\n\n[RECENT CONTEXT]\n{context}"
-    if search_results:
-        tag = ", ".join(teams) + " scores, news" if teams else "latest news, sports, events"
-        system += f"\n\n[WEB SEARCH RESULTS — {tag}]\n{search_results}"
-    else:
-        prompt = (
-            "Generate one brief observation about the user's current screen and "
-            "what they might be working on. Be specific about what you see on screen. "
-            "1 sentence max. Format: 'Noticed: <observation>.'. "
-            "Do not mention web search results if none are available."
-        )
-        system = (
-            "You are a proactive AI assistant. Examine the user's screen and "
-            "generate one specific observation about what they are doing."
-            f"\n\nActive app: {active_app}"
-        )
-    if interests:
-        system += f"\n\nThe user is interested in: {', '.join(interests)}. Prioritize these topics."
-    if teams:
-        system += f"\n\nThe user follows these sports teams: {', '.join(teams)}. Prioritize their scores, standings, and news."
-    if context:
-        system += f"\n\n[RECENT CONTEXT]\n{context}"
-    if search_results:
-        tag = ", ".join(teams) + " scores, news" if teams else "latest news, sports, events"
-        system += f"\n\n[WEB SEARCH RESULTS — {tag}]\n{search_results}"
-
-    # Use fast moondream model for proactive observations (2s vs 57s)
-    try:
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+        user_msg = {"role": "user", "content": "Describe what I'm doing on screen in one short sentence."}
+        if screenshot_b64:
+            user_msg["images"] = [screenshot_b64]
+        messages = [{"role": "system", "content": "You are a fast screen observer. One sentence only. Be specific."}, user_msg]
         resp = requests.post(
             "http://localhost:11434/api/chat",
             json={"model": "moondream", "messages": messages, "stream": False},
-            timeout=30,
+            timeout=15,
         )
         if resp.status_code == 200:
-            return resp.json().get("message", {}).get("content", "")
+            moondream_reply = resp.json().get("message", {}).get("content", "").strip()
     except Exception as e:
-        log.warning(f"Moondream proactive call failed, falling back to backend: {e}")
-    return call_backend("", active_app, "", context, system_override=system)
+        log.warning(f"Moondream vision failed: {e}")
+
+    # Build observation: combine screen observation with web search facts
+    parts = []
+    if moondream_reply and len(moondream_reply) >= 10:
+        parts.append(f"Screen: {moondream_reply}")
+    if search_results:
+        # Extract first concrete fact from web results
+        lines = search_results.split("\n")[:5]
+        facts = [l.strip() for l in lines if l.strip() and len(l.strip()) > 20][:2]
+        if facts:
+            parts.append(f"Web: {' | '.join(facts)}")
+        else:
+            parts.append(f"Web: {search_results[:200].strip()}")
+    if parts:
+        return " | ".join(parts)
+    return ""
 
 
 def write_daemon_status(
@@ -898,7 +865,7 @@ def main():
                         log.info(f"Re-detected interests: {fresh}")
                 log.info("Idle threshold reached — generating proactive observation")
                 context = build_context()
-                pro_reply = proactive_observation(context, active_app)
+                pro_reply = proactive_observation(context, active_app, screenshot_b64)
                 if pro_reply:
                     log.info(f"Proactive reply ({len(pro_reply)} chars): {pro_reply[:200]}...")
                     try:
