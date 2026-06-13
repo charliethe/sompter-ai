@@ -383,16 +383,39 @@ PROACTIVE_ALERT_KEYWORDS = [
 ]
 
 
+def get_notification_prefs() -> dict:
+    settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+    try:
+        with open(settings_path) as f:
+            s = json.load(f)
+            return s.get("notifications", {})
+    except Exception:
+        return {}
+
+
 def should_notify(reply: str, notes_msg: str, proactive: bool = False) -> bool:
     if not NOTIFICATIONS_ENABLED:
         return False
+    prefs = get_notification_prefs()
+    user_questions_enabled = prefs.get("user_questions", True)
+    proactive_enabled = prefs.get("proactive", True)
+    custom_keywords = prefs.get("keywords", None)
+
+    # User questions always trigger unless explicitly disabled
     if notes_msg.strip():
-        return True
-    if proactive:
-        lower = reply.lower()
-        return any(kw in lower for kw in PROACTIVE_ALERT_KEYWORDS)
+        return user_questions_enabled
+
+    kw_list = custom_keywords if custom_keywords else (
+        PROACTIVE_ALERT_KEYWORDS if proactive else IMPORTANT_KEYWORDS
+    )
     lower = reply.lower()
-    return any(kw in lower for kw in IMPORTANT_KEYWORDS)
+    has_keyword = any(kw in lower for kw in kw_list)
+
+    if proactive:
+        if not proactive_enabled:
+            return False
+        return has_keyword
+    return has_keyword
 
 
 def send_notification(title: str, body: str):
@@ -576,7 +599,110 @@ def save_observation(
 
 
 # ── Main loop ──────────────────────────────────────────────────────────
-# ── Proactive suggestions ──────────────────────────────────────────────
+# ── Sports team auto-discovery ──────────────────────────────────────────
+TEAM_DATABASE: dict[str, list[str]] = {
+    "nfl": [
+        "arizona cardinals", "atlanta falcons", "baltimore ravens", "buffalo bills",
+        "carolina panthers", "chicago bears", "cincinnati bengals", "cleveland browns",
+        "dallas cowboys", "denver broncos", "detroit lions", "green bay packers",
+        "houston texans", "indianapolis colts", "jacksonville jaguars", "kansas city chiefs",
+        "las vegas raiders", "los angeles chargers", "los angeles rams", "miami dolphins",
+        "minnesota vikings", "new england patriots", "new orleans saints", "new york giants",
+        "new york jets", "philadelphia eagles", "pittsburgh steelers", "san francisco 49ers",
+        "seattle seahawks", "tampa bay buccaneers", "tennessee titans", "washington commanders",
+    ],
+    "mlb": [
+        "arizona diamondbacks", "atlanta braves", "baltimore orioles", "boston red sox",
+        "chicago cubs", "chicago white sox", "cincinnati reds", "cleveland guardians",
+        "colorado rockies", "detroit tigers", "houston astros", "kansas city royals",
+        "los angeles angels", "los angeles dodgers", "miami marlins", "milwaukee brewers",
+        "minnesota twins", "new york mets", "new york yankees", "oakland athletics",
+        "philadelphia phillies", "pittsburgh pirates", "san diego padres",
+        "san francisco giants", "seattle mariners", "st. louis cardinals",
+        "tampa bay rays", "texas rangers", "toronto blue jays", "washington nationals",
+    ],
+    "nba": [
+        "atlanta hawks", "boston celtics", "brooklyn nets", "charlotte hornets",
+        "chicago bulls", "cleveland cavaliers", "dallas mavericks", "denver nuggets",
+        "detroit pistons", "golden state warriors", "houston rockets", "indiana pacers",
+        "los angeles clippers", "los angeles lakers", "memphis grizzlies", "miami heat",
+        "milwaukee bucks", "minnesota timberwolves", "new orleans pelicans",
+        "new york knicks", "oklahoma city thunder", "orlando magic", "philadelphia 76ers",
+        "phoenix suns", "portland trail blazers", "sacramento kings", "san antonio spurs",
+        "toronto raptors", "utah jazz", "washington wizards",
+    ],
+    "nhl": [
+        "anaheim ducks", "boston bruins", "buffalo sabres", "calgary flames",
+        "carolina hurricanes", "chicago blackhawks", "colorado avalanche",
+        "columbus blue jackets", "dallas stars", "detroit red wings", "edmonton oilers",
+        "florida panthers", "los angeles kings", "minnesota wild", "montreal canadiens",
+        "nashville predators", "new jersey devils", "new york islanders",
+        "new york rangers", "ottawa senators", "philadelphia flyers", "phoenix coyotes",
+        "pittsburgh penguins", "san jose sharks", "seattle kraken", "st. louis blues",
+        "tampa bay lightning", "toronto maple leafs", "vancouver canucks",
+        "vegas golden knights", "washington capitals", "winnipeg jets",
+    ],
+}
+
+def make_team_index() -> dict[str, str]:
+    """Build a lowercase-name -> formatted name lookup."""
+    idx = {}
+    for league, teams in TEAM_DATABASE.items():
+        for team in teams:
+            idx[team] = team.title()
+    return idx
+
+TEAM_INDEX = make_team_index()
+
+
+def auto_discover_teams() -> list[str]:
+    """Scan recent observations for mentions of known sports teams.
+    Returns newly discovered team names (not already tracked)."""
+    existing = get_tracked_teams()
+    existing_lower = {t.lower().strip() for t in existing}
+    discovered = []
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        rows = conn.execute(
+            "SELECT notes_message, ai_reply FROM observations ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return []
+
+    seen_team_leagues: dict[str, list[str]] = {}
+    for msg, reply in rows:
+        text = (msg + " " + reply).lower()
+        for team_lower, team_title in TEAM_INDEX.items():
+            if team_lower in text:
+                # Map to a league
+                league = next(
+                    (l for l, teams in TEAM_DATABASE.items() if team_lower in teams), "sports"
+                )
+                if team_lower not in existing_lower and team_lower not in seen_team_leagues:
+                    seen_team_leagues[team_lower] = [team_title, league]
+                break
+
+    for team_lower, (team_title, league) in seen_team_leagues.items():
+        discovered.append(team_title)
+        log.info(f"Auto-discovered team: {team_title} ({league})")
+
+    if discovered:
+        save_teams_to_settings(existing + discovered)
+
+    return discovered
+
+
+def save_teams_to_settings(teams: list[str]):
+    settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+    try:
+        with open(settings_path) as f:
+            s = json.load(f)
+        s["tracked_teams"] = teams
+        with open(settings_path, "w") as f:
+            json.dump(s, f, indent=2)
+    except Exception:
+        pass
 def get_tracked_teams() -> list[str]:
     settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
     try:
@@ -796,6 +922,13 @@ def main():
         save_interests_to_settings(initial_interests)
         log.info(f"Detected interests at startup: {initial_interests}")
 
+    # Initial team auto-discovery
+    new_teams = auto_discover_teams()
+    if new_teams:
+        msg = f"Auto-discovered teams: {', '.join(new_teams)}"
+        log.info(msg)
+        send_notification("Sompter Teams", msg)
+
     # Main loop
     while running:
         cycle_count += 1
@@ -856,13 +989,17 @@ def main():
             if idle_cycles >= PROACTIVE_THRESHOLD:
                 idle_cycles = 0
                 interest_check_cycles += 1
-                # Re-detect interests every 10 proactive cycles
+                # Re-detect interests and discover teams every 10 proactive cycles
                 if interest_check_cycles >= 10:
                     interest_check_cycles = 0
                     fresh = detect_interests()
                     if fresh:
                         save_interests_to_settings(fresh)
                         log.info(f"Re-detected interests: {fresh}")
+                    new_teams = auto_discover_teams()
+                    if new_teams:
+                        msg = f"Auto-discovered teams: {', '.join(new_teams)}"
+                        log.info(msg)
                 log.info("Idle threshold reached — generating proactive observation")
                 context = build_context()
                 pro_reply = proactive_observation(context, active_app, screenshot_b64)

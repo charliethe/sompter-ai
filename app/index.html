@@ -48,6 +48,7 @@
       <button class="gear-item" id="gear-memory">🧠 Memory</button>
       <button class="gear-item" id="gear-onboarding">📖 Setup Guide</button>
       <button class="gear-item" id="gear-watch">👁 Watch</button>
+      <button class="gear-item" id="gear-notifications">🔔 Notifications</button>
       <button class="gear-item" id="gear-about">ℹ️ About</button>
     </div>
 
@@ -356,6 +357,25 @@
         <div id="memory-observations-list" style="max-height:200px;overflow-y:auto;font-size:11px"></div>
         <div class="memory-section-title">Daily Summaries</div>
         <div id="memory-summaries-list" style="max-height:150px;overflow-y:auto;font-size:11px"></div>
+      </div>
+    </div>
+
+    <div id="notifications-panel" class="hidden">
+      <div id="notifications-header">
+        <span>🔔 Notifications</span>
+        <button id="notifications-close-btn" class="small-btn">✕</button>
+      </div>
+      <div id="notifications-content" style="padding:12px;font-size:13px">
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <input type="checkbox" id="notif-proactive"> Proactive notifications
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <input type="checkbox" id="notif-user-questions"> User question notifications
+        </label>
+        <div style="margin-bottom:6px">Critical keywords (comma-separated):</div>
+        <textarea id="notif-keywords" style="width:100%;height:60px;background:#1a1a2e;color:#e0e0f0;border:1px solid #333;border-radius:4px;padding:6px;font-size:12px;resize:vertical"></textarea>
+        <button id="notif-save-btn" class="small-btn" style="margin-top:8px;display:block;width:100%">Save Preferences</button>
+        <div id="notif-message" style="margin-top:6px;font-size:11px;color:#888"></div>
       </div>
     </div>
 
@@ -1774,6 +1794,44 @@
       gearOpen = false;
       gearPopup.classList.add('hidden');
       if ($('#setup-about-btn')) $('#setup-about-btn').click();
+    });
+
+    // Notifications Panel
+    let notificationsVisible = false;
+    const notificationsPanel = $('#notifications-panel');
+
+    async function loadNotifPrefs() {
+      try {
+        const prefs = await window.electronAPI.getNotifPrefs();
+        const p = prefs || {};
+        document.getElementById('notif-proactive').checked = p.proactive !== false;
+        document.getElementById('notif-user-questions').checked = p.user_questions !== false;
+        document.getElementById('notif-keywords').value = (p.keywords || ['storm','outage','crash']).join(', ');
+      } catch (e) { console.error('load notif prefs:', e); }
+    }
+
+    $('#gear-notifications').addEventListener('click', () => {
+      hideAllPanels();
+      hideAllPanelsExcept('notifications-panel');
+      notificationsVisible = !notificationsVisible;
+      notificationsPanel.classList.toggle('hidden', !notificationsVisible);
+      if (notificationsVisible) loadNotifPrefs();
+    });
+    $('#notifications-close-btn').addEventListener('click', () => {
+      notificationsVisible = false;
+      notificationsPanel.classList.add('hidden');
+    });
+    $('#notif-save-btn').addEventListener('click', async () => {
+      const kwText = document.getElementById('notif-keywords').value;
+      const keywords = kwText.split(',').map(s => s.trim()).filter(Boolean);
+      const prefs = {
+        proactive: document.getElementById('notif-proactive').checked,
+        user_questions: document.getElementById('notif-user-questions').checked,
+        keywords,
+      };
+      const result = await window.electronAPI.setNotifPrefs(prefs);
+      document.getElementById('notif-message').textContent = result.success ? '✓ Saved' : '✗ ' + (result.message || 'Failed');
+      setTimeout(() => { document.getElementById('notif-message').textContent = ''; }, 2000);
     });
 
     $('#prompts-close-btn').addEventListener('click', () => {

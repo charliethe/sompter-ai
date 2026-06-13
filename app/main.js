@@ -1204,6 +1204,47 @@ print(json.dumps({"observations":o,"summaries":s,"stats":st}))
   }
 });
 
+// ---- Notification Preferences IPC ----
+
+function getSettingsJson() {
+  const settingsPath = path.join(__dirname, '..', '.sompter', 'settings.json');
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  } catch { return {}; }
+}
+
+function saveSettingsJson(data) {
+  const settingsPath = path.join(__dirname, '..', '.sompter', 'settings.json');
+  const existing = getSettingsJson();
+  Object.assign(existing, data);
+  fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
+}
+
+ipcMain.handle('getNotifPrefs', async () => {
+  const s = getSettingsJson();
+  const n = s.notifications || {};
+  return {
+    proactive: n.proactive !== false,
+    user_questions: n.user_questions !== false,
+    keywords: n.keywords || ['storm', 'outage', 'crash', 'error', 'fire', 'earthquake', 'tornado', 'warning'],
+  };
+});
+
+ipcMain.handle('setNotifPrefs', async (_event, prefs) => {
+  try {
+    saveSettingsJson({
+      notifications: {
+        proactive: prefs.proactive !== false,
+        user_questions: prefs.user_questions !== false,
+        keywords: Array.isArray(prefs.keywords) ? prefs.keywords : ['storm', 'outage', 'crash', 'error', 'fire', 'earthquake', 'tornado', 'warning'],
+      },
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
 // ---- About / Version IPC ----
 
 ipcMain.handle('getAboutInfo', async () => {

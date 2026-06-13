@@ -131,6 +131,47 @@ def get_recent_observations(hours: int = 4) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def load_settings() -> dict:
+    settings_path = os.path.join(PROJECT_DIR, ".sompter", "settings.json")
+    try:
+        with open(settings_path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def build_extra_context() -> str:
+    parts = []
+    settings = load_settings()
+    teams = settings.get("tracked_teams", [])
+    interests = settings.get("tracked_interests", [])
+    if teams:
+        parts.append(f"Tracked sports teams: {', '.join(teams)}")
+    if interests:
+        parts.append(f"Detected interest areas: {', '.join(interests)}")
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        rows = conn.execute(
+            """SELECT notes_message, ai_reply FROM observations
+               WHERE ai_reply != '' ORDER BY id DESC LIMIT 50"""
+        ).fetchall()
+        conn.close()
+        from collections import Counter
+        topics = Counter()
+        for msg, reply in rows:
+            text = (msg + " " + reply).lower()
+            for kw in ["score", "win", "loss", "trade", "champion", "playoff", "game", "match"]:
+                if kw in text:
+                    topics[kw] += 1
+        if topics:
+            top_patterns = [f"{k} ({v}x)" for k, v in topics.most_common(5) if v >= 3]
+            if top_patterns:
+                parts.append(f"Recurring themes: {', '.join(top_patterns)}")
+    except Exception:
+        pass
+    return " | ".join(parts) if parts else ""
+
+
 # ── Apple Notes ────────────────────────────────────────────────────────
 def notes_ensure_log_exists():
     script = f"""
@@ -194,25 +235,30 @@ def call_ai_summarize(observations: list[dict]) -> tuple[str, str]:
         if reply:
             obs_text += f"\nAI: {reply[:500]}"
 
+    extra = build_extra_context()
     prompt = (
-        "You are a daily summarization assistant. "
-        "Below is a log of observations from today's screen-watching AI sessions. "
-        "Compress this into 3-5 bullet points covering: the key work done, "
-        "questions asked, answers received, and any recurring themes. "
-        "Be specific with names, scores, numbers, and outcomes.\n\n"
+        "You are a daily summarization assistant for an AI screen-watching agent. "
+        "Below is a log of observations from today's sessions. "
+        "Compress this into a structured daily report with sections. "
+        "Be very specific with names, scores, numbers, and outcomes.\n\n"
         f"Today's date: {date.today().isoformat()}\n"
         f"Total observations: {len(observations)}\n"
+    )
+    if extra:
+        prompt += f"Context: {extra}\n\n"
+    prompt += (
         f"Observations:\n{obs_text}\n\n"
-        "First, write a 2-3 sentence daily summary. Then list 3-5 bullet points. "
-        "Finally, extract 3-5 key facts (specific names, numbers, scores, decisions) "
-        "as a comma-separated list.\n\n"
-        "FORMAT:\n"
-        "SUMMARY: <2-3 sentences>\n"
+        "Write the summary with these sections:\n"
+        "SUMMARY: 2-3 sentence daily overview\n"
         "BULLETS:\n"
-        "- <bullet 1>\n"
-        "- <bullet 2>\n"
-        "...\n"
-        "KEY_FACTS: <comma-separated list>"
+        "- Key work done\n"
+        "- Questions asked and answers\n"
+        "- Recurring themes and patterns\n"
+        "- Any notable events (sports scores, weather, news)\n"
+        "KEY_FACTS: <comma-separated list of names, scores, numbers, decisions>\n\n"
+        "If sports scores are mentioned, highlight them prominently. "
+        "If weather events occurred, call them out. "
+        "If coding work was done, mention specific technologies."
     )
 
     payload = json.dumps({
