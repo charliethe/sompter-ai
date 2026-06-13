@@ -51,6 +51,10 @@
       <button class="gear-item" id="gear-about">ℹ️ About</button>
     </div>
 
+    <div id="backend-down-banner" class="hidden" style="background:#d32f2f;color:#fff;padding:6px 12px;font-size:12px;cursor:pointer;text-align:center">
+      ⚠ Backend not running — <a href="#" id="banner-open-onboarding" style="color:#fff;text-decoration:underline">open Setup Guide</a>
+    </div>
+
     <div id="prompts-panel" class="hidden">
       <div id="prompts-header">
         <span>Edit Prompt Buttons</span>
@@ -401,7 +405,7 @@
 
         <div id="onboarding-step-3" class="onboarding-step hidden">
           <div class="onboarding-step-title">Check Services</div>
-          <div class="onboarding-step-desc">Sompter needs the backend, Ollama (local AI), and OpenCode to be running.</div>
+          <div class="onboarding-step-desc">Sompter needs the backend, Ollama (local AI), and required AI models to be available.</div>
           <div class="onboarding-srv-check">
             <span class="onboarding-perm-dot" id="onb-backend-dot"></span>
             <span class="onboarding-perm-label">Backend · API server</span>
@@ -411,11 +415,22 @@
             <span class="onboarding-perm-label">Ollama · Local AI</span>
           </div>
           <div class="onboarding-srv-check">
+            <span class="onboarding-perm-dot" id="onb-gemma-dot"></span>
+            <span class="onboarding-perm-label">gemma3:12b · Vision model</span>
+          </div>
+          <div class="onboarding-srv-check">
+            <span class="onboarding-perm-dot" id="onb-moondream-dot"></span>
+            <span class="onboarding-perm-label">moondream · Fast observations</span>
+          </div>
+          <div class="onboarding-srv-check">
             <span class="onboarding-perm-dot" id="onb-opencode-dot"></span>
             <span class="onboarding-perm-label">OpenCode · Project edits</span>
           </div>
           <div class="onboarding-srv-buttons">
-            <button class="setup-btn test-btn" id="onb-check-srv-btn">🔄 Check Services</button>
+            <button class="setup-btn" id="onb-start-backend-btn">▶ Start Backend</button>
+            <button class="setup-btn" id="onb-pull-gemma-btn" style="display:none">⬇ Pull gemma3:12b</button>
+            <button class="setup-btn" id="onb-pull-moondream-btn" style="display:none">⬇ Pull moondream</button>
+            <button class="setup-btn test-btn" id="onb-check-srv-btn">🔄 Refresh</button>
             <button class="setup-btn" id="onb-open-srv-btn">🛠 Open Services Panel</button>
           </div>
           <div id="onboarding-srv-status" class="hidden"></div>
@@ -2372,6 +2387,15 @@
         setSetupDot('setup-opencode-dot', false);
         $('#setup-provider').textContent = 'error';
       }
+      updateBackendBanner();
+    }
+
+    function updateBackendBanner() {
+      const banner = $('#backend-down-banner');
+      if (!banner) return;
+      const dot = $('#setup-backend-dot');
+      const backendOk = dot && dot.classList.contains('green');
+      banner.classList.toggle('hidden', !!backendOk);
     }
 
     async function toggleSetup() {
@@ -3096,15 +3120,19 @@
     let currentStep = 1;
     let onboardingVisible = false;
 
-    function isOnboardingComplete() {
-      return localStorage.getItem('sompter_onboarding_complete') === 'true';
+    async function isOnboardingComplete() {
+      if (localStorage.getItem('sompter_onboarding_complete') === 'true') return true;
+      try { const r = await window.electronAPI.checkOnboardingState(); if (r.done) return true; } catch {}
+      return false;
     }
 
-    function setOnboardingComplete(val) {
+    async function setOnboardingComplete(val) {
       if (val) {
         localStorage.setItem('sompter_onboarding_complete', 'true');
+        try { await window.electronAPI.writeOnboardingState(true); } catch {}
       } else {
         localStorage.removeItem('sompter_onboarding_complete');
+        try { await window.electronAPI.writeOnboardingState(false); } catch {}
       }
     }
 
@@ -3150,6 +3178,13 @@
         setOnbDot('onb-backend-dot', st.backend && st.backend.alive ? 'green' : 'red');
         setOnbDot('onb-ollama-dot', st.ollama && st.ollama.alive ? 'green' : 'red');
         setOnbDot('onb-opencode-dot', st.opencode && st.opencode.alive ? 'green' : 'red');
+        const modelStatus = await window.electronAPI.checkOllamaModels();
+        setOnbDot('onb-gemma-dot', modelStatus.has_gemma ? 'green' : 'red');
+        setOnbDot('onb-moondream-dot', modelStatus.has_moondream ? 'green' : 'red');
+        const gemmaBtn = $('#onb-pull-gemma-btn');
+        const moonBtn = $('#onb-pull-moondream-btn');
+        if (gemmaBtn) gemmaBtn.style.display = (!modelStatus.has_gemma && modelStatus.success) ? '' : 'none';
+        if (moonBtn) moonBtn.style.display = (!modelStatus.has_moondream && modelStatus.success) ? '' : 'none';
       } catch { }
     }
 
@@ -3237,6 +3272,36 @@
     $('#onb-check-srv-btn').addEventListener('click', async () => {
       await refreshOnboardingServices();
       showOnbStatus('onboarding-srv-status', true, 'Services refreshed');
+    });
+    $('#onb-start-backend-btn').addEventListener('click', async () => {
+      const btn = $('#onb-start-backend-btn');
+      btn.textContent = '▶ Starting...';
+      btn.disabled = true;
+      const r = await window.electronAPI.startBackend();
+      btn.textContent = '▶ Start Backend';
+      btn.disabled = false;
+      showOnbStatus('onboarding-srv-status', r.success, r.success ? r.message : `Failed: ${r.message}`);
+      if (r.success) setTimeout(refreshOnboardingServices, 3000);
+    });
+    $('#onb-pull-gemma-btn').addEventListener('click', async () => {
+      const btn = $('#onb-pull-gemma-btn');
+      btn.textContent = '⬇ Downloading gemma3:12b...';
+      btn.disabled = true;
+      const r = await window.electronAPI.pullOllamaModel('gemma3:12b');
+      btn.textContent = '⬇ Pull gemma3:12b';
+      btn.disabled = false;
+      showOnbStatus('onboarding-srv-status', r.success, r.success ? 'gemma3:12b pulled!' : `Failed: ${r.message}`);
+      if (r.success) setTimeout(refreshOnboardingServices, 2000);
+    });
+    $('#onb-pull-moondream-btn').addEventListener('click', async () => {
+      const btn = $('#onb-pull-moondream-btn');
+      btn.textContent = '⬇ Downloading moondream...';
+      btn.disabled = true;
+      const r = await window.electronAPI.pullOllamaModel('moondream');
+      btn.textContent = '⬇ Pull moondream';
+      btn.disabled = false;
+      showOnbStatus('onboarding-srv-status', r.success, r.success ? 'moondream pulled!' : `Failed: ${r.message}`);
+      if (r.success) setTimeout(refreshOnboardingServices, 2000);
     });
     $('#onb-open-srv-btn').addEventListener('click', () => {
       hideAllPanelsExcept('onboarding-panel');
@@ -3357,6 +3422,13 @@
       }
     });
 
+    // Backend-down banner
+    $('#banner-open-onboarding').addEventListener('click', (e) => {
+      e.preventDefault();
+      hideAllPanelsExcept('');
+      showOnboarding(3);
+    });
+
     // Safe Mode indicator
     (async () => {
       try {
@@ -3369,8 +3441,8 @@
     })();
 
     // First-run detection: run after everything else initializes
-    setTimeout(() => {
-      if (!isOnboardingComplete()) {
+    setTimeout(async () => {
+      if (!(await isOnboardingComplete())) {
         // Expand sidebar, show onboarding
         const st = readState();
         if (st.collapsed) {

@@ -409,6 +409,56 @@ ipcMain.handle('testOpencode', async () => {
   }
 });
 
+ipcMain.handle('startBackend', async () => {
+  try {
+    const r = await fetch(`${BACKEND}/api/health`, { timeout: 2000 });
+    if (r.ok) return { success: true, message: 'Backend already running' };
+  } catch {}
+  try {
+    const projectRoot = getProjectRoot();
+    const venvPython = path.join(projectRoot, '.venv', 'bin', 'python3');
+    const proc = spawn(venvPython, ['-m', 'uvicorn', 'backend.server:app', '--port', '8787'], {
+      cwd: projectRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    });
+    proc.unref();
+    return { success: true, message: 'Backend starting...' };
+  } catch (err) {
+    return { success: false, message: `Error: ${err.message}` };
+  }
+});
+
+ipcMain.handle('checkOllamaModels', async () => {
+  try {
+    const r = await fetch('http://localhost:11434/api/tags', { timeout: 3000 });
+    const data = await r.json();
+    const models = (data.models || []).map(m => m.name);
+    return {
+      success: true,
+      models,
+      has_gemma: models.some(m => m.startsWith('gemma3:12b')),
+      has_moondream: models.some(m => m.startsWith('moondream')),
+    };
+  } catch (err) {
+    return { success: false, models: [], has_gemma: false, has_moondream: false, error: err.message };
+  }
+});
+
+ipcMain.handle('pullOllamaModel', async (_event, model) => {
+  try {
+    const r = await fetch('http://localhost:11434/api/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: model, stream: false }),
+      timeout: 600000,
+    });
+    return r.ok ? { success: true } : { success: false, message: `HTTP ${r.status}` };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+});
+
 ipcMain.handle('smartFix', async (_event, { projectPath, projectName, userPrompt }) => {
   try {
     const base64 = await takeScreenshot();
@@ -592,6 +642,20 @@ ipcMain.handle('openREADME', async () => {
 
 ipcMain.handle('openExternalURL', async (_event, url) => {
   shell.openExternal(url);
+});
+
+ipcMain.handle('writeOnboardingState', async (_event, val) => {
+  const statePath = path.join(getProjectRoot(), '.sompter', '.onboarding-done');
+  if (val) {
+    fs.writeFileSync(statePath, 'done', 'utf-8');
+  } else {
+    try { fs.unlinkSync(statePath); } catch {}
+  }
+});
+
+ipcMain.handle('checkOnboardingState', async () => {
+  const statePath = path.join(getProjectRoot(), '.sompter', '.onboarding-done');
+  return { done: fs.existsSync(statePath) };
 });
 
 ipcMain.handle('openPrivacySettings', async (_event, pane) => {

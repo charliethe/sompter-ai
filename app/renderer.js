@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFile: (filePath) => ipcRenderer.invoke('openFile', { filePath }),
   openREADME: () => ipcRenderer.invoke('openREADME'),
   openExternalURL: (url) => ipcRenderer.invoke('openExternalURL', url),
+  writeOnboardingState: (val) => ipcRenderer.invoke('writeOnboardingState', val),
+  checkOnboardingState: () => ipcRenderer.invoke('checkOnboardingState'),
 
   // Window state
   initWindow: (collapsed, y) => ipcRenderer.invoke('initWindow', collapsed, y),
@@ -39,6 +41,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testControl: () => ipcRenderer.invoke('testControl'),
   testOpencode: () => ipcRenderer.invoke('testOpencode'),
   openPrivacySettings: (pane) => ipcRenderer.invoke('openPrivacySettings', pane),
+  startBackend: () => ipcRenderer.invoke('startBackend'),
+  checkOllamaModels: () => ipcRenderer.invoke('checkOllamaModels'),
+  pullOllamaModel: (model) => ipcRenderer.invoke('pullOllamaModel', model),
 
   // Folder selection
   selectFolder: () => ipcRenderer.invoke('selectFolder'),
