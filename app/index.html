@@ -307,6 +307,14 @@
             <span class="watch-label">Focus:</span>
             <span class="watch-value" id="watch-daemon-focus">—</span>
           </div>
+          <div class="watch-row">
+            <span class="watch-label">Window:</span>
+            <span class="watch-value" id="watch-daemon-window" style="font-size:10px;color:#aaa">—</span>
+          </div>
+          <div class="watch-row">
+            <span class="watch-label">URL:</span>
+            <span class="watch-value" id="watch-daemon-url" style="font-size:10px;color:#8af">—</span>
+          </div>
           <div class="watch-row" style="margin-top:6px">
             <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
               <input type="checkbox" id="watch-focus-toggle" checked> Focus Mode (auto-suppress proactive during meetings/deep work)
@@ -3315,6 +3323,8 @@
       const focusLabels = { meeting: 'Meeting 🎙', deep_work: 'Deep Work 🎯', idle: 'Idle 💤', normal: 'Normal' };
       focusEl.textContent = focusLabels[focusState] || focusState;
       focusEl.style.color = focusState === 'meeting' ? '#f59e0b' : focusState === 'deep_work' ? '#22c55e' : '#888';
+      el('watch-daemon-window').textContent = (status && status.window_title) || '—';
+      el('watch-daemon-url').textContent = (status && status.active_url) || '—';
     }
 
     async function pollDaemonStatus() {

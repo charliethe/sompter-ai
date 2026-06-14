@@ -123,6 +123,29 @@ def get_active_app() -> str:
     return run_osascript(script, timeout=5)
 
 
+def get_window_title() -> str:
+    """Get the title of the frontmost window of the active app."""
+    try:
+        app_name = get_active_app()
+        if not app_name:
+            return ""
+        # Browsers handled separately via get_browser_tabs
+        if app_name.lower() in ("google chrome", "safari", "firefox", "brave browser", "edge", "opera"):
+            return ""
+        script = (
+            f'tell application "System Events" '
+            f'to get title of first window of first process whose frontmost is true'
+        )
+        result = run_osascript(script, timeout=5)
+        # Filter out common non-informative titles
+        skip = {"", "window", "untitled", app_name}
+        if result.strip() not in skip and len(result.strip()) > 2:
+            return result.strip()[:200]
+        return ""
+    except Exception:
+        return ""
+
+
 # ── Browser tab monitoring ─────────────────────────────────────────────
 def app_is_running(name: str) -> bool:
     try:
@@ -1520,12 +1543,15 @@ def write_daemon_status(
     cycle: int, status: str, active_app: str = "", notes_msg: str = "",
     obs_count: int = 0, pattern_count: int = 0, patterns: list[str] | None = None,
     last_obs_time: str = "", focus_state: str = "normal",
+    window_title: str = "", active_url: str = "",
 ):
     data = {
         "pid": os.getpid(),
         "status": status,
         "cycle": cycle,
         "active_app": active_app[:100],
+        "window_title": window_title[:100],
+        "active_url": active_url[:200],
         "notes_message": notes_msg[:100] if notes_msg else "",
         "last_observation_time": last_obs_time,
         "observation_count": obs_count,
@@ -1624,13 +1650,25 @@ def main():
         except Exception as e:
             log.error(f"Screenshot failed: {e}")
 
-        # 2. Active app + browser tabs
+        # 2. Active app + window title + browser tabs
         active_app = ""
+        window_title = ""
+        active_url = ""
         try:
             active_app = get_active_app()
+            window_title = get_window_title()
             browser_tabs = get_browser_tabs()
             if browser_tabs:
                 active_app += f"\n{browser_tabs}"
+                # Extract URL from first browser tab
+                for line in browser_tabs.split(","):
+                    if " | " in line:
+                        parts = line.split(" | ", 1)
+                        if len(parts) > 1 and "http" in parts[1].lower():
+                            active_url = parts[1].strip()[:200]
+                            break
+            if window_title:
+                active_app += f"\nWindow: {window_title}"
             log.info(f"Active app: {active_app[:200]}")
         except Exception as e:
             log.error(f"Active app failed: {e}")
@@ -1685,7 +1723,7 @@ def main():
             write_daemon_status(
                 cycle_count, "running, no changes", active_app, "",
                 obs_count, len(_patterns_list), _patterns_list,
-                focus_state=focus_state,
+                focus_state=focus_state, window_title=window_title, active_url=active_url,
             )
             # Proactive web search on prolonged idle (suppressed during focus)
             if idle_cycles >= PROACTIVE_THRESHOLD:
@@ -1778,7 +1816,7 @@ def main():
         write_daemon_status(
             cycle_count, "running", active_app, notes_msg,
             obs_count, len(_patterns_list), _patterns_list,
-            focus_state=focus_state,
+            focus_state=focus_state, window_title=window_title, active_url=active_url,
         )
 
         # 7. Wait (check every second if we should stop)
