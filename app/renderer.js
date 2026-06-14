@@ -112,6 +112,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPromptTemplates: () => ipcRenderer.invoke('getPromptTemplates'),
   savePromptTemplate: (template) => ipcRenderer.invoke('savePromptTemplate', template),
   deletePromptTemplate: (id) => ipcRenderer.invoke('deletePromptTemplate', id),
+  getSuggestions: () => ipcRenderer.invoke('getSuggestions'),
+  dismissSuggestion: (id) => ipcRenderer.invoke('dismissSuggestion', id),
   getNotifPrefs: () => ipcRenderer.invoke('getNotifPrefs'),
   setNotifPrefs: (prefs) => ipcRenderer.invoke('setNotifPrefs', prefs),
   notesSend: (text) => ipcRenderer.invoke('notesSend', text),

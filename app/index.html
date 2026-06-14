@@ -722,6 +722,12 @@
       <div id="action-result" class="hidden"></div>
     </div>
 
+    <div id="suggestions-bar" class="hidden" style="background:#2a1a4e;border-bottom:1px solid #3d3d5c;padding:4px 12px;font-size:11px;display:flex;align-items:center;gap:8px">
+      <span style="color:#a78bfa;font-weight:600">💡</span>
+      <span id="suggestions-text" style="flex:1;color:#e0e0f0"></span>
+      <button id="suggestions-dismiss-btn" class="small-btn" style="font-size:9px;padding:1px 6px">✕</button>
+    </div>
+
     <div id="chat-container">
       <div id="chat-log"></div>
       <button id="scroll-bottom-btn">↓ New responses</button>
@@ -3254,6 +3260,33 @@
         await window.electronAPI.saveSettings(settings);
       } catch (e) { console.error('Failed to save clipboard setting', e); }
     });
+
+    // Suggestions bar
+    async function refreshSuggestions() {
+      try {
+        const suggestions = await window.electronAPI.getSuggestions();
+        const bar = $('#suggestions-bar');
+        const text = $('#suggestions-text');
+        if (suggestions && suggestions.length > 0) {
+          bar.classList.remove('hidden');
+          text.textContent = suggestions[0].suggestion_text;
+          text.dataset.suggestionId = suggestions[0].id;
+        } else {
+          bar.classList.add('hidden');
+        }
+      } catch (e) { console.error('Suggestions error:', e); }
+    }
+
+    $('#suggestions-dismiss-btn').addEventListener('click', async () => {
+      const text = $('#suggestions-text');
+      const id = text.dataset.suggestionId;
+      if (id) await window.electronAPI.dismissSuggestion(parseInt(id));
+      refreshSuggestions();
+    });
+
+    // Refresh suggestions periodically
+    setInterval(refreshSuggestions, 60000);
+    setTimeout(refreshSuggestions, 3000);
 
     // ---- Tracked Teams ----
     async function loadTrackedTeams() {

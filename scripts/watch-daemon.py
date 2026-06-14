@@ -493,6 +493,16 @@ def init_memory():
             FOREIGN KEY (observation_id) REFERENCES observations(id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            suggestion_text TEXT NOT NULL,
+            category TEXT DEFAULT 'general',
+            context TEXT DEFAULT '',
+            is_dismissed INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
     log.info(f"Memory DB initialized at {MEMORY_DB}")
@@ -544,6 +554,73 @@ def detect_patterns() -> list[str]:
     except Exception as e:
         log.warning(f"Pattern detection failed: {e}")
         return []
+
+
+def generate_suggestions():
+    """Generate smart suggestions based on detected patterns, interests, and observations.
+    Stores non-dismissed suggestions in the memory DB."""
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        now = datetime.now().isoformat()
+        suggestions = []
+
+        # 1. Pattern-based suggestions
+        patterns = detect_patterns()
+        for pat in patterns:
+            existing = conn.execute(
+                "SELECT id FROM suggestions WHERE context = ? AND is_dismissed = 0",
+                (pat[:200],)
+            ).fetchone()
+            if not existing:
+                suggestions.append((
+                    f"Pattern detected: {pat}",
+                    "pattern", pat[:200], now
+                ))
+
+        # 2. Stale interest check
+        settings = load_settings()
+        interests = settings.get("tracked_interests", [])
+        if interests:
+            recent_obs = conn.execute(
+                "SELECT COUNT(*) FROM observations WHERE timestamp > ?",
+                ((datetime.now() - timedelta(days=3)).isoformat(),)
+            ).fetchone()[0]
+            if recent_obs < 5:
+                suggestions.append((
+                    f"You haven't been active in a while — want to explore {interests[0]}?",
+                    "engagement", "", now
+                ))
+
+        # 3. Top entity suggestion
+        top_entity = conn.execute(
+            "SELECT name FROM entities ORDER BY mentions DESC LIMIT 1"
+        ).fetchone()
+        if top_entity and top_entity[0]:
+            suggestions.append((
+                f"You frequently mention '{top_entity[0]}' — want me to research it deeper?",
+                "knowledge", top_entity[0], now
+            ))
+
+        # 4. Screenshot gallery tip
+        ss_count = conn.execute("SELECT COUNT(*) FROM screenshots").fetchone()[0]
+        if ss_count >= 5:
+            suggestions.append((
+                f"You have {ss_count} saved screenshots — browse them in Memory > Screenshots",
+                "tip", "", now
+            ))
+
+        # Insert new suggestions
+        for text, category, ctx, ts in suggestions:
+            conn.execute(
+                "INSERT INTO suggestions (suggestion_text, category, context, is_dismissed, created_at) VALUES (?, ?, ?, 0, ?)",
+                (text, category, ctx, ts)
+            )
+        conn.commit()
+        conn.close()
+        if suggestions:
+            log.info(f"Generated {len(suggestions)} new suggestions")
+    except Exception as e:
+        log.warning(f"Failed to generate suggestions: {e}")
 
 
 # ── System Stats ───────────────────────────────────────────────────────
@@ -1626,6 +1703,7 @@ def main():
                             msg = f"Auto-discovered teams: {', '.join(new_teams)}"
                             log.info(msg)
                         ai_enhance_entities()
+                    generate_suggestions()
                 else:
                     idle_cycles = 0
                     interest_check_cycles += 1
@@ -1641,6 +1719,7 @@ def main():
                             msg = f"Auto-discovered teams: {', '.join(new_teams)}"
                             log.info(msg)
                         ai_enhance_entities()
+                    generate_suggestions()
                     log.info("Idle threshold reached — generating proactive observation")
                     context = build_context(focus_state=focus_state)
                     pro_reply = proactive_observation(context, active_app, screenshot_b64)

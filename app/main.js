@@ -1324,6 +1324,53 @@ print(f"Exported {len(data['observations'])} observations, {len(data['entities']
   }
 });
 
+// ---- Suggestions IPC ----
+ipcMain.handle('getSuggestions', async () => {
+  const dbPath = path.join(__dirname, '..', '.sompter', 'memory.db');
+  try {
+    if (!fs.existsSync(dbPath)) return [];
+    const tmpScript = path.join(app.getPath('temp'), `sompter-suggestions-${Date.now()}.py`);
+    const pyScript = `import json, sqlite3, sys
+db = sys.argv[1]
+con = sqlite3.connect(db)
+con.row_factory = sqlite3.Row
+rows = con.execute("SELECT id, suggestion_text, category, context, created_at FROM suggestions WHERE is_dismissed = 0 ORDER BY id DESC LIMIT 20").fetchall()
+con.close()
+print(json.dumps([dict(r) for r in rows]))
+`;
+    fs.writeFileSync(tmpScript, pyScript, 'utf-8');
+    const r = execFileSync(path.join(__dirname, '..', '.venv', 'bin', 'python3'), [tmpScript, dbPath], { timeout: 10000, maxBuffer: 1024 * 1024 });
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return JSON.parse(r.toString().trim());
+  } catch (err) {
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return [];
+  }
+});
+
+ipcMain.handle('dismissSuggestion', async (_event, suggestionId) => {
+  const dbPath = path.join(__dirname, '..', '.sompter', 'memory.db');
+  try {
+    const tmpScript = path.join(app.getPath('temp'), `sompter-dismiss-${Date.now()}.py`);
+    const pyScript = `import sqlite3, sys
+db = sys.argv[1]
+sid = int(sys.argv[2])
+con = sqlite3.connect(db)
+con.execute("UPDATE suggestions SET is_dismissed = 1 WHERE id = ?", (sid,))
+con.commit()
+con.close()
+print("ok")
+`;
+    fs.writeFileSync(tmpScript, pyScript, 'utf-8');
+    const r = execFileSync(path.join(__dirname, '..', '.venv', 'bin', 'python3'), [tmpScript, dbPath, String(suggestionId)], { timeout: 10000 });
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return { success: true };
+  } catch (err) {
+    try { fs.unlinkSync(tmpScript); } catch {}
+    return { success: false, message: err.message };
+  }
+});
+
 // ---- Notification Preferences IPC ----
 
 function getSettingsJson() {
