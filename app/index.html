@@ -49,6 +49,7 @@
       <button class="gear-item" id="gear-onboarding">📖 Setup Guide</button>
       <button class="gear-item" id="gear-watch">👁 Watch</button>
       <button class="gear-item" id="gear-notifications">🔔 Notifications</button>
+      <button class="gear-item" id="gear-mcp">🔌 MCP Servers</button>
       <button class="gear-item" id="gear-about">ℹ️ About</button>
     </div>
 
@@ -412,6 +413,26 @@
         <textarea id="notif-keywords" style="width:100%;height:60px;background:#1a1a2e;color:#e0e0f0;border:1px solid #333;border-radius:4px;padding:6px;font-size:12px;resize:vertical"></textarea>
         <button id="notif-save-btn" class="small-btn" style="margin-top:8px;display:block;width:100%">Save Preferences</button>
         <div id="notif-message" style="margin-top:6px;font-size:11px;color:#888"></div>
+      </div>
+    </div>
+
+    <div id="mcp-panel" class="hidden">
+      <div id="mcp-header" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#2a1a4e;border-bottom:1px solid #3d3d5c">
+        <span style="color:#e0e0f0;font-weight:600">🔌 MCP Servers</span>
+        <button id="mcp-add-btn" class="small-btn">+ Add Server</button>
+        <button id="mcp-close-btn" class="small-btn">✕</button>
+      </div>
+      <div id="mcp-list" style="padding:8px 12px;font-size:12px;max-height:300px;overflow-y:auto"></div>
+      <div id="mcp-editor" class="hidden" style="border-top:1px solid #3d3d5c;padding:8px 12px">
+        <div style="margin-bottom:4px"><input type="text" id="mcp-edit-name" placeholder="Server name..." style="width:100%;background:#1a1a2e;color:#e0e0f0;border:1px solid #3d3d5c;border-radius:4px;padding:4px 6px;font-size:11px;outline:none;box-sizing:border-box"></div>
+        <div style="margin-bottom:4px"><input type="text" id="mcp-edit-command" placeholder="Command (e.g. npx -y @modelcontextprotocol/server-filesystem)" style="width:100%;background:#1a1a2e;color:#e0e0f0;border:1px solid #3d3d5c;border-radius:4px;padding:4px 6px;font-size:11px;outline:none;box-sizing:border-box"></div>
+        <div style="margin-bottom:4px"><input type="text" id="mcp-edit-args" placeholder="Arguments (space separated)" style="width:100%;background:#1a1a2e;color:#e0e0f0;border:1px solid #3d3d5c;border-radius:4px;padding:4px 6px;font-size:11px;outline:none;box-sizing:border-box"></div>
+        <div style="display:flex;gap:4px">
+          <button id="mcp-save-btn" class="small-btn" style="font-size:10px;padding:2px 8px">Save</button>
+          <button id="mcp-cancel-btn" class="small-btn" style="font-size:10px;padding:2px 8px">Cancel</button>
+          <button id="mcp-delete-btn" class="small-btn delete-btn" style="font-size:10px;padding:2px 8px;display:none">Delete</button>
+        </div>
+        <div id="mcp-msg" style="font-size:10px;color:#888;margin-top:4px"></div>
       </div>
     </div>
 
@@ -2033,6 +2054,108 @@
       setTimeout(() => { document.getElementById('notif-message').textContent = ''; }, 2000);
     });
 
+    // ── MCP Server Panel ──────────────────────────────────────────
+    let mcpVisible = false;
+    let mcpEditingId = null;
+    const mcpPanel = $('#mcp-panel');
+
+    $('#gear-mcp').addEventListener('click', () => {
+      hideAllPanels();
+      hideAllPanelsExcept('mcp-panel');
+      mcpVisible = !mcpVisible;
+      mcpPanel.classList.toggle('hidden', !mcpVisible);
+      if (mcpVisible) { $('#mcp-editor').classList.add('hidden'); renderMCPServers(); }
+    });
+    $('#mcp-close-btn').addEventListener('click', () => {
+      mcpVisible = false;
+      mcpPanel.classList.add('hidden');
+    });
+
+    async function renderMCPServers() {
+      try {
+        const servers = await window.electronAPI.getMCPServers();
+        const list = $('#mcp-list');
+        list.innerHTML = '';
+        if (!servers || !servers.length) {
+          list.innerHTML = '<div style="color:#666;padding:8px">No MCP servers configured. Click + Add Server to add one.</div>';
+          return;
+        }
+        servers.forEach(s => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:1px solid #2a2a4e';
+          const dot = document.createElement('span');
+          dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${s.running ? '#22c55e' : '#666'}`;
+          const info = document.createElement('span');
+          info.style.cssText = 'flex:1;font-size:11px';
+          info.innerHTML = `${dot.outerHTML}<span style="color:#e0e0f0">${s.name}</span> <span style="color:#888;font-size:10px">${s.command}</span>`;
+          const btns = document.createElement('div');
+          btns.style.cssText = 'display:flex;gap:4px';
+          if (s.running) {
+            const stopBtn = document.createElement('button');
+            stopBtn.className = 'small-btn';
+            stopBtn.style.cssText = 'font-size:9px;padding:1px 6px;color:#ef4444';
+            stopBtn.textContent = 'Stop';
+            stopBtn.addEventListener('click', async () => { await window.electronAPI.stopMCPServer(s.id); renderMCPServers(); });
+            btns.appendChild(stopBtn);
+          } else {
+            const startBtn = document.createElement('button');
+            startBtn.className = 'small-btn';
+            startBtn.style.cssText = 'font-size:9px;padding:1px 6px;color:#22c55e';
+            startBtn.textContent = 'Start';
+            startBtn.addEventListener('click', async () => { await window.electronAPI.startMCPServer(s.id); renderMCPServers(); });
+            btns.appendChild(startBtn);
+          }
+          const editBtn = document.createElement('button');
+          editBtn.className = 'small-btn';
+          editBtn.style.cssText = 'font-size:9px;padding:1px 4px';
+          editBtn.textContent = '✎';
+          editBtn.addEventListener('click', () => openMCPEditor(s.id));
+          btns.appendChild(editBtn);
+          row.appendChild(info);
+          row.appendChild(btns);
+          list.appendChild(row);
+        });
+      } catch (e) { console.error('MCP list error:', e); }
+    }
+
+    async function openMCPEditor(id) {
+      mcpEditingId = id;
+      const servers = await window.electronAPI.getMCPServers();
+      const s = servers.find(x => x.id === id) || { name: '', command: '', args: '' };
+      $('#mcp-edit-name').value = s.name || '';
+      $('#mcp-edit-command').value = s.command || '';
+      $('#mcp-edit-args').value = s.args || '';
+      $('#mcp-editor').classList.remove('hidden');
+      $('#mcp-delete-btn').style.display = id ? '' : 'none';
+      $('#mcp-msg').textContent = '';
+    }
+
+    $('#mcp-add-btn').addEventListener('click', () => {
+      mcpEditingId = null;
+      $('#mcp-edit-name').value = '';
+      $('#mcp-edit-command').value = '';
+      $('#mcp-edit-args').value = '';
+      $('#mcp-editor').classList.remove('hidden');
+      $('#mcp-delete-btn').style.display = 'none';
+      $('#mcp-msg').textContent = '';
+      $('#mcp-edit-name').focus();
+    });
+
+    $('#mcp-save-btn').addEventListener('click', async () => {
+      const name = $('#mcp-edit-name').value.trim();
+      const command = $('#mcp-edit-command').value.trim();
+      if (!name || !command) { $('#mcp-msg').textContent = 'Name and command required'; return; }
+      const server = { id: mcpEditingId || Date.now().toString(), name, command, args: $('#mcp-edit-args').value.trim() };
+      await window.electronAPI.saveMCPServer(server);
+      $('#mcp-editor').classList.add('hidden');
+      renderMCPServers();
+    });
+
+    $('#mcp-cancel-btn').addEventListener('click', () => { $('#mcp-editor').classList.add('hidden'); $('#mcp-msg').textContent = ''; });
+    $('#mcp-delete-btn').addEventListener('click', async () => {
+      if (mcpEditingId) { await window.electronAPI.deleteMCPServer(mcpEditingId); $('#mcp-editor').classList.add('hidden'); mcpEditingId = null; renderMCPServers(); }
+    });
+
     $('#prompts-close-btn').addEventListener('click', () => {
       promptsPanelVisible = false;
       $('#prompts-panel').classList.add('hidden');
@@ -3536,7 +3659,7 @@
     }
 
     function hideAllPanelsExcept(excludeId) {
-      const panels = ['#prompts-panel', '#history-panel', '#setup-panel', '#models-panel', '#diagnostics-panel', '#services-panel', '#onboarding-panel', '#watch-panel', '#about-panel', '#memory-panel'];
+      const panels = ['#prompts-panel', '#history-panel', '#setup-panel', '#models-panel', '#diagnostics-panel', '#services-panel', '#onboarding-panel', '#watch-panel', '#about-panel', '#memory-panel', '#notifications-panel', '#mcp-panel'];
       panels.forEach(sel => {
         if (sel !== '#' + excludeId) {
           const p = document.querySelector(sel);

@@ -16,6 +16,9 @@ const COLLAPSED_H = 120;
 const EXPANDED_W = 380;
 const EXPANDED_H = 680;
 
+// MCP Server process management
+const mcpProcesses = new Map(); // serverId -> { proc, name, startedAt }
+
 // ---- Menu bar / Notification helpers ----
 
 function getMenuBarPrefs() {
@@ -1367,6 +1370,84 @@ print("ok")
     return { success: true };
   } catch (err) {
     try { fs.unlinkSync(tmpScript); } catch {}
+    return { success: false, message: err.message };
+  }
+});
+
+// ---- MCP Server IPC ----
+ipcMain.handle('getMCPServers', async () => {
+  const s = getSettingsJson();
+  const servers = (s.mcp_servers || []).map(srv => {
+    const proc = mcpProcesses.get(srv.id);
+    return { ...srv, running: !!proc, pid: proc ? proc.proc.pid : null };
+  });
+  return servers;
+});
+
+ipcMain.handle('saveMCPServer', async (_event, server) => {
+  const s = getSettingsJson();
+  const servers = s.mcp_servers || [];
+  const idx = servers.findIndex(t => t.id === server.id);
+  if (idx >= 0) servers[idx] = server;
+  else servers.push(server);
+  s.mcp_servers = servers;
+  saveSettingsJson(s);
+  return { success: true };
+});
+
+ipcMain.handle('deleteMCPServer', async (_event, serverId) => {
+  // Stop if running
+  const proc = mcpProcesses.get(serverId);
+  if (proc) {
+    try { proc.proc.kill(); } catch {}
+    mcpProcesses.delete(serverId);
+  }
+  const s = getSettingsJson();
+  s.mcp_servers = (s.mcp_servers || []).filter(t => t.id !== serverId);
+  saveSettingsJson(s);
+  return { success: true };
+});
+
+ipcMain.handle('startMCPServer', async (_event, serverId) => {
+  // Stop existing if running
+  const existing = mcpProcesses.get(serverId);
+  if (existing) {
+    try { existing.proc.kill(); } catch {}
+    mcpProcesses.delete(serverId);
+  }
+  const s = getSettingsJson();
+  const server = (s.mcp_servers || []).find(t => t.id === serverId);
+  if (!server) return { success: false, message: 'Server not found' };
+  try {
+    const parts = server.command.trim().split(/\s+/);
+    const cmd = parts[0];
+    const args = parts.slice(1);
+    const proc = spawn(cmd, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+    mcpProcesses.set(serverId, { proc, name: server.name, startedAt: new Date().toISOString() });
+    let logData = '';
+    proc.stdout.on('data', (data) => { logData += data.toString(); });
+    proc.stderr.on('data', (data) => { logData += data.toString(); });
+    proc.on('exit', (code) => {
+      console.log(`MCP server ${server.name} exited with code ${code}`);
+      mcpProcesses.delete(serverId);
+    });
+    return { success: true, pid: proc.pid };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+});
+
+ipcMain.handle('stopMCPServer', async (_event, serverId) => {
+  const proc = mcpProcesses.get(serverId);
+  if (!proc) return { success: false, message: 'Not running' };
+  try {
+    proc.proc.kill();
+    mcpProcesses.delete(serverId);
+    return { success: true };
+  } catch (err) {
     return { success: false, message: err.message };
   }
 });
